@@ -1,0 +1,152 @@
+---
+title: "Basci models"
+format: html
+editor: visual
+---
+
+## Data and Packages
+
+```{r}
+library(ctsem)
+```
+
+```{r}
+head(ctstantestdat)
+ctstantestdat <- as.data.frame(ctstantestdat)
+str(ctstantestdat)
+```
+
+## Model 0
+
+```{r}
+model <- ctModel(type='stanct', 
+                 latentNames=c('eta1','eta2'), # 
+                 manifestNames=c('Y1','Y2'), #Observed measurements of the latent processes
+                 TIpredNames = 'TI1', #default: covariates affect all free subject level parameters
+                 LAMBDA=diag(2)) #Factor loading matrix of latent processes on measurements
+
+ctModelLatex(model)
+```
+
+```{r}
+head(model$pars)
+```
+
+## Model 1
+
+### Model specification
+
+```{r}
+model_1 <- ctModel(type = "stanct",
+                   n.latent = 2, latentNames=c('eta1','eta2'),
+                   n.manifest = 2, manifestNames=c('Y1','Y2'),
+                   CINT = matrix(c('cint1', 'cint2'), nrow = 2, ncol = 1), #free cint intercept
+                   MANIFESTMEANS = matrix(c(0,0)), # fix manifest means to 0
+                   n.TIpred = 1, TIpredNames = 'TI1',
+                   LAMBDA=diag(2))
+ctModelLatex(model_1)
+```
+
+```{r}
+head(model_1$pars)
+```
+
+### Model fitting
+
+```{r}
+fit <- ctStanFit(datalong = ctstantestdat, ctstanmodel = model_1, priors=TRUE, optimize = FALSE) 
+# priors: True -> HMC, false -> max likelihood
+```
+
+### Summary and plots
+
+```{r}
+summary(fit)
+
+summary(fit)$popmeans
+
+ctStanContinuousPars(fit, subjects = 3, 
+                     calcfunc = quantile, 
+                     calcfuncargs = list(probs = .975))
+```
+
+```{r}
+plot(fit)
+```
+
+```{r}
+ctStanDiscretePars(fit, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
+ctStanPlotPost(obj = fit, rows = 3) # posterior vs prior
+
+ctKalman(fit, subjects = 4,
+         timerange = c(0,10),
+         timestep = .1,
+         kalmanvec = c('y', 'etaprior'), 
+         plot = TRUE, 
+         plotcontrol = list(xaxs = 'i', main = "Predicted"))
+```
+
+```{r}
+ctStanTIpredeffects(fit, plot = TRUE, 
+                    whichpars=c('dtDRIFT[2,1]','CINT'),
+                    timeinterval = 1,
+                    whichTIpreds = 1,
+                    includeMeanUncertainty = TRUE)
+```
+
+## Model with one subject
+
+```{r}
+ctstantestdat_one <- ctstantestdat[ctstantestdat$id ==1, ]
+fit_one <- ctStanFit(datalong = ctstantestdat_one, ctstanmodel = model_1, priors=TRUE, optimize = FALSE) 
+```
+
+```{r}
+summary(fit_one)
+
+summary(fit_one)$popmeans
+
+ctStanContinuousPars(fit_one, 
+                     calcfunc = quantile, 
+                     calcfuncargs = list(probs = .975))
+```
+
+```{r}
+ctStanDiscretePars(fit_one, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
+ctStanPlotPost(obj = fit_one, rows = 3) # posterior vs prior
+
+ctKalman(fit_one,
+         timerange = c(0,10),
+         timestep = .1,
+         kalmanvec = c('y', 'etaprior'), 
+         plot = TRUE, 
+         plotcontrol = list(xaxs = 'i', main = "Predicted"))
+```
+
+## Plots examples
+
+```{r}
+#Basic
+ctKalman(ctstantestfit, timerange=c(0,60), plot=TRUE)
+
+#Multiple subjects, y and yprior, showing plot arguments
+plot1<-ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, plot=TRUE,
+  subjects=2:3, 
+  kalmanvec=c('y','yprior'),
+  errorvec=c(NA,'ypriorcov')) #'auto' would also have achieved this
+  
+ #modify plot as per normal with ggplot
+ print(plot1+ggplot2::coord_cartesian(xlim=c(0,10)))
+ 
+ #or generate custom plot from scratch:#'  
+ k=ctKalman(ctstantestfit, timerange=c(0,60), timestep=.1, subjects=2:3)
+ library(ggplot2)
+ ggplot(k[k$Element %in% 'yprior',],
+   aes(x=Time, y=value,colour=Subject,linetype=Row)) +
+   geom_line() +
+   theme_bw()
+```
