@@ -7,6 +7,7 @@ editor: source
 ```{r}
 library(ctsem)
 library(expm)
+set.seed(16917042)
 ```
 
 ## Model with 2 latent processes
@@ -20,7 +21,7 @@ library(expm)
 ```{r}
 # compute drift matrix from discrete time effects with a time interval of 1
 delta_t <- 1
-drift_matrix_1 <- logm(matrix(c(0.8, 0.2, 0.15, 0.7), nrow = 2)) / delta_t
+drift_matrix_1 <- expm::logm(matrix(c(0.8, 0.2, 0.15, 0.7), nrow = 2)) / delta_t
 rel <- 1
  
 # model to simulate data
@@ -28,8 +29,8 @@ generating_model_1 <- ctModel(Tpoints = 200, n.latent = 2, n.TDpred = 0, n.TIpre
                               LAMBDA = diag(1, 2),
                               MANIFESTVAR = diag(0, 2),
                               MANIFESTMEANS = matrix(0, ncol = 1, nrow = 2),
-                              DRIFT = drift_matrix,
-                              #TRAITVAR = matrix(c(0.5, 0.2, 0, 0.8), nrow=2), # erst bei n > 1?
+                              DRIFT = drift_matrix_1,
+                              #TRAITVAR = matrix(c(0.5, 0.2, 0, 0.8), nrow=2), # erst bei n > 1
                               DIFFUSION = matrix(c(0.5, 0.2, 0, 0.4), nrow = 2),
                               T0MEANS = matrix(1, ncol = 1, nrow = 2),
                               T0VAR = diag(0.1, 2)
@@ -70,13 +71,14 @@ fit_1 <- ctStanFit(datalong = data_1, ctstanmodel = model_1, priors = FALSE, opt
 ### Summary and plots
 
 ```{r}
-summary(fit)
+summary(fit_1)
 
-summary(fit)$popmeans
+summary(fit_1)$popmeans
 
-ctStanContinuousPars(fit,  
-                     calcfunc = quantile, 
-                     calcfuncargs = list(probs = .975))
+ctCI(fit_1, confidenceintervals = "DRIFT")
+
+ctStanContinuousPars(fit_1, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5))$DRIFT[1,1]
 ```
 
 ```{r}
@@ -95,6 +97,117 @@ ctKalman(fit, subjects = 1,
          kalmanvec = c('y', 'etaprior'), 
          plot = TRUE, 
          plotcontrol = list(xaxs = 'i', main = "Predicted"))
+```
+## 
+
+```{r}
+sim_ctsem <- function(n_sims, n_subjects, n_tpoints, alpha = 0.05){
+  
+  # Initialize results data frame
+  drift_results <- data.frame(iter = integer(),
+                              drift_symptom_severity = numeric(),
+                              drift_symptom_severity_lower = numeric(),
+                              drift_symptom_severity_upper = numeric(),
+                              drift_symptom_severity_significance = numeric(),
+                              drift_symptom_severity_avoidance = numeric(),
+                              drift_symptom_severity_avoidance_lower = numeric(),
+                              drift_symptom_severity_avoidance_upper = numeric(),
+                              drift_symptom_severity_avoidance_significance = numeric(),
+                              drift_avoidance_symptom_severity = numeric(),
+                              drift_avoidance_symptom_severity_lower = numeric(),
+                              drift_avoidance_symptom_severity_upper = numeric(),
+                              drift_avoidance_symptom_severity_significance = numeric(),
+                              drift_avoidance = numeric(),
+                              drift_avoidance_lower = numeric(),
+                              drift_avoidance_upper = numeric(),
+                              drift_avoidance_significance = numeric()
+                              )
+  
+  # Generating model
+  delta_t <- 1
+  drift_matrix_true <- logm(matrix(c(0.8, 0.2, 0.15, 0.7), nrow = 2)) / delta_t
+  generating_model_sim <- ctModel(Tpoints = n_tpoints, n.latent = 2, n.TDpred = 0, n.TIpred = 0, n.manifest = 2,
+                                  LAMBDA = diag(1, 2),
+                                  MANIFESTVAR = diag(0, 2),
+                                  MANIFESTMEANS = matrix(0, ncol = 1, nrow = 2),
+                                  DRIFT = drift_matrix_true,
+                                  #TRAITVAR = matrix(c(0.5, 0.2, 0, 0.8), nrow=2), # erst bei n > 1
+                                  DIFFUSION = matrix(c(0.5, 0.2, 0, 0.4), nrow = 2),
+                                  T0MEANS = matrix(1, ncol = 1, nrow = 2),
+                                  T0VAR = diag(0.1, 2)
+                                  )
+  
+  # Loop 
+  for (i in 1:n_sims) {
+    
+    tryCatch({
+    
+      # Generate data
+      data_sim <- ctGenerate(generating_model_sim, n.subjects = n_subjects, burnin = 100, dtmean = 0.15, logdtsd = .1)
+      
+      # Model specification
+      model_sim <- ctModel(type = "stanct",
+                           n.latent = 2, latentNames=c('symptom_severity','avoidance'),
+                           n.manifest = 2, manifestNames=c('Y1','Y2'),
+                           LAMBDA=diag(2))
+      model_sim$pars$indvarying <- FALSE
+    
+      # Model fitting
+      fit_sim <- ctStanFit(datalong = data_sim, ctstanmodel = model_sim, priors = FALSE, optimize = TRUE) 
+
+      # Drift matrix estimates
+      drift_matrix <- summary(fit_sim)$parmatrices$DRIFT
+
+      drift_results[i, ] <- c(i,
+                              summary(fit_sim)$popmeans[3, 1], # Auto-effect of symptom severity
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = alpha/2))$DRIFT[1,1],
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[1,1],
+                              !(ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                     calcfuncargs = list(probs = 0.025))$DRIFT[1,1] <= 0 &
+                                  ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                       calcfuncargs = list(probs = 0.975))$DRIFT[1,1] >= 0),
+                              summary(fit_sim)$popmeans[4, 1], # Cross-effect from symptom severity to avoidance
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = alpha/2))$DRIFT[1,2],
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[1,2],
+                              summary(fit_sim)$popmeans[4, 1],
+                              summary(fit_sim)$popmeans[5, 1], # Cross-effect from avoidance to symptom severity
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = alpha/2))$DRIFT[2,1],
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[2,1],
+                              summary(fit_sim)$popmeans[5, 1],
+                              summary(fit_sim)$popmeans[6, 1],  # Auto-effect of avoidance
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = alpha/2))$DRIFT[2,2],
+                              ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                   calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[2,2],
+                              summary(fit_sim)$popmeans[6, 1]
+                              )
+
+      # Progress indicator
+      if (i %% 50 == 0) {
+        cat("Completed simulation", i, "of", n_sims, "\n")
+      }
+
+    }, error = function(e) {
+      
+      # Handle convergence failures
+      cat("Simulation", i, "failed:", e$message, "\n")
+      drift_results[i, 2:17] <- NA
+    })
+    
+  }
+  return(drift_results)
+}
+
+results_2 <- sim_ctsem(5, 1, 200)
+
+summary(results[, 2:5])
+
 ```
 
 
