@@ -231,6 +231,9 @@ summary(results_t_5000[, 2:17])
 ```{r}
 # Plot drift_symptom_severity
 
+delta_t <- 1
+drift_matrix_true <- logm(matrix(c(0.8, 0.2, 0.15, 0.7), nrow = 2)) / delta_t
+
 # remove outliers
 filtered_results <- results[results$drift_symptom_severity > -5, ]
 
@@ -240,6 +243,7 @@ cat("Number of rows removed:", removed_rows, "\n")
 
 summary(filtered_results)
 
+# Histogram
 ggplot(filtered_results, aes(x = drift_symptom_severity)) +
   geom_histogram(bins = 30, fill = "lightblue", color = "white") +
   geom_vline(
@@ -262,7 +266,28 @@ ggplot(filtered_results, aes(x = drift_symptom_severity)) +
   ) +
   theme_minimal()
 
-boxplot(filtered_results$drift_symptom_severity)
+ggplot(filtered_results, aes(x = drift_symptom_severity)) +
+  geom_boxplot() +
+  geom_vline(
+    xintercept = drift_matrix_true[1,1],
+    color      = "red",
+    linetype   = "dashed",
+    size       = 1
+  ) +
+  labs(
+    title = "Distribution of estimates",
+    x     = "Estimate",
+    y     = "Häufigkeit"
+  ) +
+  annotate("text",
+    x = drift_matrix_true[1,1],
+    y = 1,
+    label = paste("Wahrer Wert =", drift_matrix_true[1,1]),
+    color = "red",
+    vjust = -0.5,
+  ) +
+  theme_minimal()
+
 
 ```
 
@@ -300,7 +325,27 @@ ggplot(filtered_results_5000, aes(x = drift_symptom_severity)) +
   ) +
   theme_minimal()
 
-boxplot(filtered_results_5000$drift_symptom_severity)
+ggplot(filtered_results_5000, aes(x = drift_symptom_severity)) +
+  geom_boxplot() +
+  geom_vline(
+    xintercept = drift_matrix_true[1,1],
+    color      = "red",
+    linetype   = "dashed",
+    size       = 1
+  ) +
+  labs(
+    title = "Distribution of estimates",
+    x     = "Estimate",
+    y     = "Häufigkeit"
+  ) +
+  annotate("text",
+    x = drift_matrix_true[1,1],
+    y = 1,
+    label = paste("Wahrer Wert =", drift_matrix_true[1,1]),
+    color = "red",
+    vjust = -0.5,
+  ) +
+  theme_minimal()
 
 ```
 
