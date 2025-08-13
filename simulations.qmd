@@ -7,6 +7,7 @@ editor: source
 ```{r}
 library(ctsem)
 library(expm)
+library(ggplot2)
 set.seed(16917042)
 ```
 
@@ -98,7 +99,7 @@ ctKalman(fit, subjects = 1,
          plot = TRUE, 
          plotcontrol = list(xaxs = 'i', main = "Predicted"))
 ```
-## 
+## Simulation
 
 ```{r}
 sim_ctsem <- function(n_sims, n_subjects, n_tpoints, alpha = 0.05){
@@ -173,19 +174,28 @@ sim_ctsem <- function(n_sims, n_subjects, n_tpoints, alpha = 0.05){
                                                    calcfuncargs = list(probs = alpha/2))$DRIFT[1,2],
                               ctStanContinuousPars(fit_sim, calcfunc = quantile, 
                                                    calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[1,2],
-                              summary(fit_sim)$popmeans[4, 1],
+                              !(ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                     calcfuncargs = list(probs = 0.025))$DRIFT[1,2] <= 0 &
+                                  ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                       calcfuncargs = list(probs = 0.975))$DRIFT[1,2] >= 0),
                               summary(fit_sim)$popmeans[5, 1], # Cross-effect from avoidance to symptom severity
                               ctStanContinuousPars(fit_sim, calcfunc = quantile, 
                                                    calcfuncargs = list(probs = alpha/2))$DRIFT[2,1],
                               ctStanContinuousPars(fit_sim, calcfunc = quantile, 
                                                    calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[2,1],
-                              summary(fit_sim)$popmeans[5, 1],
+                              !(ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                     calcfuncargs = list(probs = 0.025))$DRIFT[2,1] <= 0 &
+                                  ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                       calcfuncargs = list(probs = 0.975))$DRIFT[2,1] >= 0),
                               summary(fit_sim)$popmeans[6, 1],  # Auto-effect of avoidance
                               ctStanContinuousPars(fit_sim, calcfunc = quantile, 
                                                    calcfuncargs = list(probs = alpha/2))$DRIFT[2,2],
                               ctStanContinuousPars(fit_sim, calcfunc = quantile, 
                                                    calcfuncargs = list(probs = 1 - alpha/2))$DRIFT[2,2],
-                              summary(fit_sim)$popmeans[6, 1]
+                              !(ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                     calcfuncargs = list(probs = 0.025))$DRIFT[2,2] <= 0 &
+                                  ctStanContinuousPars(fit_sim, calcfunc = quantile, 
+                                                       calcfuncargs = list(probs = 0.975))$DRIFT[2,2] >= 0)
                               )
 
       # Progress indicator
@@ -201,18 +211,98 @@ sim_ctsem <- function(n_sims, n_subjects, n_tpoints, alpha = 0.05){
     })
     
   }
-  return(drift_results)
+  
+  return(drift_results, drift_matrix_true)
 }
+```
 
-results_2 <- sim_ctsem(5, 1, 200)
+### Results and plots
 
-summary(results[, 2:5])
+```{r}
+results <- sim_ctsem(500, 1, 200)
+
+results_t_5000 <- sim_ctsem(50, 1, 5000)
+
+summary(results[, 2:17])
+
+summary(results_t_5000[, 2:17])
+```
+
+```{r}
+# Plot drift_symptom_severity
+
+# remove outliers
+filtered_results <- results[results$drift_symptom_severity > -5, ]
+
+# Number of outliers
+removed_rows <- nrow(results) - nrow(filtered_results)
+cat("Number of rows removed:", removed_rows, "\n")
+
+summary(filtered_results)
+
+ggplot(filtered_results, aes(x = drift_symptom_severity)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "white") +
+  geom_vline(
+    xintercept = drift_matrix_true[1,1],
+    color      = "red",
+    linetype   = "dashed",
+    size       = 1
+  ) +
+  labs(
+    title = "Distribution of estimates",
+    x     = "Estimate",
+    y     = "Häufigkeit"
+  ) +
+  annotate("text",
+    x = drift_matrix_true[1,1],
+    y = 1,
+    label = paste("Wahrer Wert =", drift_matrix_true[1,1]),
+    color = "red",
+    vjust = -0.5,
+  ) +
+  theme_minimal()
+
+boxplot(filtered_results$drift_symptom_severity)
 
 ```
 
+```{r}
+# Plot drift_symptom_severity
 
+# remove outliers
+filtered_results_5000 <- results_t_5000[results_t_5000$drift_symptom_severity > -5, ]
 
+# Number of outliers
+removed_rows <- nrow(results_t_5000) - nrow(filtered_results_5000)
+cat("Number of rows removed:", removed_rows, "\n")
 
+summary(filtered_results_5000)
+
+ggplot(filtered_results_5000, aes(x = drift_symptom_severity)) +
+  geom_histogram(bins = 30, fill = "lightblue", color = "white") +
+  geom_vline(
+    xintercept = drift_matrix_true[1,1],
+    color      = "red",
+    linetype   = "dashed",
+    size       = 1
+  ) +
+  labs(
+    title = "Distribution of estimates",
+    x     = "Estimate",
+    y     = "Häufigkeit"
+  ) +
+  annotate("text",
+    x = drift_matrix_true[1,1],
+    y = 1,
+    label = paste("Wahrer Wert =", drift_matrix_true[1,1]),
+    color = "red",
+    vjust = -0.5,
+  ) +
+  theme_minimal()
+
+boxplot(filtered_results_5000$drift_symptom_severity)
+
+```
 
 
 ## Model with 3 latent processes
