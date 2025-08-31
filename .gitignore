@@ -53,6 +53,9 @@ rsconnect/
 
 
 # HTML files
-*.html
+# *.html
+
+# Folders
+/*/
 
 
