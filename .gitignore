@@ -58,4 +58,12 @@ rsconnect/
 # Folders
 /*/
 
+# Word files
+*.docx
+
+# csv files
+*.csv
+
+
+
 

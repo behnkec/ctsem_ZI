@@ -1,0 +1,137 @@
+---
+title: "ema"
+format: html
+---
+
+## 
+
+```{r}
+library(readr)
+library(dplyr)
+library(ctsem)
+```
+## Data preparation
+
+```{r}
+# Load data
+dat_ema <- read_csv("00000000-0000-0006-0000-000000000006.csv")
+dat_ema1 <- read_csv("00000000-0000-0003-0000-000000000003.csv")
+
+# exclude non-participants
+dat <- bind_rows(
+  dat_ema %>% filter(grepl("NBMP", pseudonym, fixed = TRUE)),
+  dat_ema1 %>% filter(grepl("NBMT", pseudonym, fixed = TRUE))
+)
+
+#View(dat)
+
+# add columns for every item
+dat <- dat %>%
+  mutate(
+    A1a = ifelse(grepl("A1a", variableName), variableValue, NA),
+    A1b = ifelse(grepl("A1b", variableName), variableValue, NA),
+    A3 = ifelse(grepl("A3", variableName), variableValue, NA),
+    A9 = ifelse(grepl("A9", variableName), variableValue, NA),
+    A4 = ifelse(grepl("A4", variableName), variableValue, NA),
+    K3 = ifelse(grepl("K3", variableName), variableValue, NA),
+    K4 = ifelse(grepl("K4", variableName), variableValue, NA),
+    A8 = ifelse(grepl("A8", variableName), variableValue, NA),
+    K1 = ifelse(grepl("K1", variableName), variableValue, NA),
+    K2 = ifelse(grepl("K2", variableName), variableValue, NA),
+    A6 = ifelse(grepl("A6", variableName), variableValue, NA),
+    A2 = ifelse(grepl("A2", variableName), variableValue, NA),
+    A5 = ifelse(grepl("A5", variableName), variableValue, NA),
+    A7 = ifelse(grepl("A7", variableName), variableValue, NA)
+  )
+
+# exclude self initiated interactions
+dat_systemTriggered <- dat %>%
+  filter(triggerName == "TriggerDailyAtRandomInTimeRangeVariableConfig")
+
+# aggregate to one time point per interaction
+items <- c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "K1", "K2", "A6", "A2", "A5", "A7")
+constant_cols <- c("pseudonym", "group", "triggerName", "interactionName", 
+                      "interactionReminder", "interactionStatus")
+
+dat_aggregated <- dat_systemTriggered %>%
+  group_by(triggerCount, pseudonym) %>%
+  summarise(
+    # constant columns: should be the same for all rows in group
+    group = first(group),
+    triggerName = first(triggerName),
+    interactionName = first(interactionName),
+    interactionReminder = first(interactionReminder),
+    interactionStatus = first(interactionStatus),
+
+    # for items: keep the non-NA value (should be only one per group)
+    A1a = first(na.omit(A1a)),
+    A1b = first(na.omit(A1b)),
+    A3 = first(na.omit(A3)),
+    A9 = first(na.omit(A9)),
+    A4 = first(na.omit(A4)),
+    K3 = first(na.omit(K3)),
+    K4 = first(na.omit(K4)),
+    A8 = first(na.omit(A8)),
+    K1 = first(na.omit(K1)),
+    K2 = first(na.omit(K2)),
+    A6 = first(na.omit(A6)),
+    A2 = first(na.omit(A2)),
+    A5 = first(na.omit(A5)),
+    A7 = first(na.omit(A7)),
+
+    # all other cols: keep first value
+    across(
+      !any_of(c("triggerCount", "pseudonym", constant_cols, items)),
+      first
+    ),
+
+    .groups = "drop"
+  )
+
+# individual time scale with 1 = 1h and 1 = 1d
+dat_aggregated <- dat_aggregated %>%
+  
+  group_by(pseudonym) %>%
+  arrange(variableCreatedDateTime) %>%
+  
+  # time difference from first observation in days and hours
+  mutate(
+    time_days = as.numeric(difftime(variableCreatedDateTime, first(variableCreatedDateTime), units = "days"))
+  ) %>%
+  mutate(
+    time_hours = as.numeric(difftime(variableCreatedDateTime, first(variableCreatedDateTime), units = "hours"))
+  ) %>%
+  ungroup() %>%
+  
+  # sort by pseudonym and time
+  arrange(pseudonym, time_days)
+```
+
+## Descriptives
+
+```{r}
+# proportion of completed questionnaires
+xtabs(~ interactionStatus, data = dat_aggregated)["Completed"]/nrow(dat_aggregated)
+
+# participant with highest number of completed questionnaires
+participant_fewestNAs <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  count(pseudonym, sort = TRUE) %>%
+  slice(1) %>%
+  pull(pseudonym)
+
+
+```
+
+
+## Model fitting
+
+### Single participant
+
+```{r}
+# model
+
+
+
+```
+
