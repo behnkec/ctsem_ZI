@@ -23,25 +23,27 @@ dat <- bind_rows(
   dat_ema1 %>% filter(grepl("NBMT", pseudonym, fixed = TRUE))
 )
 
+#str(dat)
 #View(dat)
 
 # add columns for every item
 dat <- dat %>%
   mutate(
-    A1a = ifelse(grepl("A1a", variableName), variableValue, NA),
-    A1b = ifelse(grepl("A1b", variableName), variableValue, NA),
-    A3 = ifelse(grepl("A3", variableName), variableValue, NA),
-    A9 = ifelse(grepl("A9", variableName), variableValue, NA),
-    A4 = ifelse(grepl("A4", variableName), variableValue, NA),
-    K3 = ifelse(grepl("K3", variableName), variableValue, NA),
-    K4 = ifelse(grepl("K4", variableName), variableValue, NA),
-    A8 = ifelse(grepl("A8", variableName), variableValue, NA),
-    K1 = ifelse(grepl("K1", variableName), variableValue, NA),
-    K2 = ifelse(grepl("K2", variableName), variableValue, NA),
-    A6 = ifelse(grepl("A6", variableName), variableValue, NA),
-    A2 = ifelse(grepl("A2", variableName), variableValue, NA),
-    A5 = ifelse(grepl("A5", variableName), variableValue, NA),
-    A7 = ifelse(grepl("A7", variableName), variableValue, NA)
+    A1a = as.numeric(ifelse(grepl("A1a", variableName), variableValue, NA)),
+    A1b = as.numeric(ifelse(grepl("A1b", variableName), variableValue, NA)),
+    A3 = as.numeric(ifelse(grepl("A3", variableName), variableValue, NA)),
+    A9 = as.numeric(ifelse(grepl("A9", variableName), variableValue, NA)),
+    A4 = as.numeric(ifelse(grepl("A4", variableName), variableValue, NA)),
+    K3 = as.numeric(ifelse(grepl("K3", variableName), variableValue, NA)),
+    K4 = as.numeric(ifelse(grepl("K4", variableName), variableValue, NA)),
+    A8 = as.numeric(ifelse(grepl("A8", variableName), variableValue, NA)),
+    K1 = as.numeric(ifelse(grepl("K1", variableName), variableValue, NA)),
+    K2 = as.numeric(ifelse(grepl("activity_K2", variableName), variableValue, NA)),
+    K2_other = as.numeric(ifelse(grepl("K2_other", variableName), variableValue, NA)),
+    A6 = as.numeric(ifelse(grepl("A6", variableName), variableValue, NA)),
+    A2 = as.numeric(ifelse(grepl("A2", variableName), variableValue, NA)),
+    A5 = as.numeric(ifelse(grepl("A5", variableName), variableValue, NA)),
+    A7 = as.numeric(ifelse(grepl("A7", variableName), variableValue, NA))
   )
 
 # exclude self initiated interactions
@@ -74,6 +76,7 @@ dat_aggregated <- dat_systemTriggered %>%
     A8 = first(na.omit(A8)),
     K1 = first(na.omit(K1)),
     K2 = first(na.omit(K2)),
+    K2_other = first(na.omit(K2_other)),
     A6 = first(na.omit(A6)),
     A2 = first(na.omit(A2)),
     A5 = first(na.omit(A5)),
@@ -105,21 +108,26 @@ dat_aggregated <- dat_aggregated %>%
   
   # sort by pseudonym and time
   arrange(pseudonym, time_days)
+
+# Scaling
+
+dat_scale <- dat_aggregated
+
+dat_scale[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scale[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
 ```
 
 ## Descriptives
 
 ```{r}
 # proportion of completed questionnaires
-xtabs(~ interactionStatus, data = dat_aggregated)["Completed"]/nrow(dat_aggregated)
+xtabs(~ interactionStatus, data = dat_scaled)["Completed"]/nrow(dat_scaled)
 
 # participant with highest number of completed questionnaires
-participant_fewestNAs <- dat_aggregated %>%
+participant_fewestNAs <- dat_scaled %>%
   filter(interactionStatus == "Completed") %>%
   count(pseudonym, sort = TRUE) %>%
   slice(1) %>%
   pull(pseudonym)
-
 
 ```
 
@@ -129,9 +137,66 @@ participant_fewestNAs <- dat_aggregated %>%
 ### Single participant
 
 ```{r}
-# model
+participant_fewestNAs_data <- dat_scaled %>%
+  filter(pseudonym == participant_fewestNAs)
 
+# Model specification
+model_1 <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                   n.latent = 2, latentNames = c('symptom_load','connectedness'),
+                   n.manifest = 2, manifestNames = c('A1b','A8'),
+                   LAMBDA=diag(2))
+model_1$pars$indvarying <- FALSE
 
+# Model fitting
+fit_1 <- ctStanFit(datalong = participant_fewestNAs_data, ctstanmodel = model_1, priors = FALSE, optimize = TRUE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_1)
+
+# continuous parameters
+ctStanContinuousPars(fit_1, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5))$DRIFT[1,1]
+
+plot(fit_1)
+
+ctStanDiscretePars(fit_1, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
+#ctStanPlotPost(obj = fit, rows = 3) # posterior vs prior
+
+ctKalman(fit_1, subjects = 1,
+         timerange = c(0,10),
+         timestep = 3,
+         kalmanvec = c('y', 'etaprior'), 
+         plot = TRUE, 
+         plotcontrol = list(xaxs = 'i', main = "Predicted"))
+
+model_1 <- ctModel(type = "stanct",
+                   n.latent = 2, latentNames=c('eta1','eta2'),
+                   n.manifest = 2, manifestNames=c('Y1','Y2'),
+                   CINT = matrix(c('cint1', 'cint2'), nrow = 2, ncol = 1), #free cint intercept
+                   MANIFESTMEANS = matrix(c(0,0)), # fix manifest means to 0
+                   LAMBDA=diag(2))
+```
+
+### all participants without context
+
+```{r}
+pred <- c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7")
+# Model specification
+model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                   n.latent = length(pred)-1, latentNames = c("A1", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
+                   n.manifest = length(pred), manifestNames = c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
+                   LAMBDA = matrix(c(1,1, rep(c(rep(0, length(pred)), 1), length(pred)-2)), nrow = length(pred)))
+model_all$pars$indvarying <- FALSE
+
+# Model fitting
+fit_all <- ctStanFit(datalong = dat_scaled, ctstanmodel = model_all, priors = FALSE, optimize = TRUE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_all)
 
 ```
 
