@@ -5,14 +5,15 @@ format: html
 
 ## 
 
-```{r}
+```{r, message=FALSE}
 library(readr)
 library(dplyr)
 library(ctsem)
+
 ```
 ## Data preparation
 
-```{r}
+```{r, message=FALSE}
 # Load data
 dat_ema <- read_csv("00000000-0000-0006-0000-000000000006.csv")
 dat_ema1 <- read_csv("00000000-0000-0003-0000-000000000003.csv")
@@ -111,9 +112,9 @@ dat_aggregated <- dat_aggregated %>%
 
 # Scaling
 
-dat_scale <- dat_aggregated
+dat_scaled <- dat_aggregated
 
-dat_scale[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scale[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
+dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
 ```
 
 ## Descriptives
@@ -172,17 +173,11 @@ ctKalman(fit_1, subjects = 1,
          plot = TRUE, 
          plotcontrol = list(xaxs = 'i', main = "Predicted"))
 
-model_1 <- ctModel(type = "stanct",
-                   n.latent = 2, latentNames=c('eta1','eta2'),
-                   n.manifest = 2, manifestNames=c('Y1','Y2'),
-                   CINT = matrix(c('cint1', 'cint2'), nrow = 2, ncol = 1), #free cint intercept
-                   MANIFESTMEANS = matrix(c(0,0)), # fix manifest means to 0
-                   LAMBDA=diag(2))
 ```
 
-### all participants without context
+### All participants and all covariates without context
 
-```{r}
+```{r, eval=FALSE}
 pred <- c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7")
 # Model specification
 model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
@@ -192,11 +187,10 @@ model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
 model_all$pars$indvarying <- FALSE
 
 # Model fitting
-fit_all <- ctStanFit(datalong = dat_scaled, ctstanmodel = model_all, priors = FALSE, optimize = TRUE) 
+fit_all <- ctStanFit(datalong = dat_scaled, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
 summary(fit_all)
 
 ```
-
