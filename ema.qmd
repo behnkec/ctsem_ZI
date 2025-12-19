@@ -157,21 +157,21 @@ summary(fit_1)
 
 # continuous parameters
 ctStanContinuousPars(fit_1, calcfunc = quantile,
-  calcfuncargs = list(probs = 0.5))$DRIFT[1,1]
+  calcfuncargs = list(probs = 0.5))$DRIFT
+ctStanContinuousPars(fit_1, calcfunc = mean)$DRIFT
 
 plot(fit_1)
 
 ctStanDiscretePars(fit_1, plot = TRUE, # regression coefficient for particular time intervals
                    indices = 'CR') # cross effects (AR would be auto effects)
 
-#ctStanPlotPost(obj = fit, rows = 3) # posterior vs prior
+#ctStanPlotPost(obj = fit_1, rows = 3) # posterior vs prior (here no priors)
 
-ctKalman(fit_1, subjects = 1,
-         timerange = c(0,10),
-         timestep = 3,
-         kalmanvec = c('y', 'etaprior'), 
-         plot = TRUE, 
-         plotcontrol = list(xaxs = 'i', main = "Predicted"))
+#ctKalman(fit_1,
+#         timerange = "asdata",
+#         timestep = "auto",
+#         plot = TRUE, 
+#         plotcontrol = list(xaxs = 'i', main = "Predicted"))
 
 ```
 
