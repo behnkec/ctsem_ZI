@@ -3,14 +3,15 @@ title: "ema"
 format: html
 ---
 
-## 
+## Load packages
 
 ```{r, message=FALSE}
 library(readr)
-library(dplyr)
+library(tidyverse)
 library(ctsem)
-
+library(misty)
 ```
+
 ## Data preparation
 
 ```{r, message=FALSE}
@@ -40,7 +41,7 @@ dat <- dat %>%
     A8 = as.numeric(ifelse(grepl("A8", variableName), variableValue, NA)),
     K1 = as.numeric(ifelse(grepl("K1", variableName), variableValue, NA)),
     K2 = as.numeric(ifelse(grepl("activity_K2", variableName), variableValue, NA)),
-    K2_other = as.numeric(ifelse(grepl("K2_other", variableName), variableValue, NA)),
+    K2_other = ifelse(grepl("K2_other", variableName), variableValue, NA),
     A6 = as.numeric(ifelse(grepl("A6", variableName), variableValue, NA)),
     A2 = as.numeric(ifelse(grepl("A2", variableName), variableValue, NA)),
     A5 = as.numeric(ifelse(grepl("A5", variableName), variableValue, NA)),
@@ -53,6 +54,7 @@ dat_systemTriggered <- dat %>%
 
 # aggregate to one time point per interaction
 items <- c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "K1", "K2", "A6", "A2", "A5", "A7")
+act_scores <- c("A1b", "A3", "A4", "A6", "A2", "A5", "A7")
 constant_cols <- c("pseudonym", "group", "triggerName", "interactionName", 
                       "interactionReminder", "interactionStatus")
 
@@ -92,7 +94,7 @@ dat_aggregated <- dat_systemTriggered %>%
     .groups = "drop"
   )
 
-# individual time scale with 1 = 1h and 1 = 1d
+# individual time scale in days and hours
 dat_aggregated <- dat_aggregated %>%
   
   group_by(pseudonym) %>%
@@ -105,6 +107,10 @@ dat_aggregated <- dat_aggregated %>%
   mutate(
     time_hours = as.numeric(difftime(variableCreatedDateTime, first(variableCreatedDateTime), units = "hours"))
   ) %>%
+  mutate(
+    K1 = as.factor(K1),
+    K2 = as.factor(K2)
+  ) %>%
   ungroup() %>%
   
   # sort by pseudonym and time
@@ -112,23 +118,18 @@ dat_aggregated <- dat_aggregated %>%
 
 # Scaling
 
-dat_scaled <- dat_aggregated
-
-dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
+# dat_scaled <- dat_aggregated
+# dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
 ```
 
 ## Descriptives
 
 ```{r}
 # proportion of completed questionnaires
-xtabs(~ interactionStatus, data = dat_scaled)["Completed"]/nrow(dat_scaled)
+xtabs(~ interactionStatus, data = dat_aggregated)["Completed"]/nrow(dat_aggregated)
 
-# participant with highest number of completed questionnaires
-participant_fewestNAs <- dat_scaled %>%
-  filter(interactionStatus == "Completed") %>%
-  count(pseudonym, sort = TRUE) %>%
-  slice(1) %>%
-  pull(pseudonym)
+# proportion of requested interaction
+xtabs(~ triggerName, data = dat)["RequestedInteraction"]/nrow(dat)
 
 ```
 
@@ -138,22 +139,32 @@ participant_fewestNAs <- dat_scaled %>%
 ### Single participant
 
 ```{r}
-participant_fewestNAs_data <- dat_scaled %>%
-  filter(pseudonym == participant_fewestNAs)
+# participant with highest number of completed questionnaires
+ID_fewestNAs <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  count(pseudonym, sort = TRUE) %>%
+  slice(1) %>%
+  pull(pseudonym)
+
+dat_fewestesNAs <- dat_aggregated %>%
+  filter(pseudonym == ID_fewestNAs)
+
+dat_fewestesNAs[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_fewestesNAs[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
 
 # Model specification
 model_1 <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
-                   n.latent = 2, latentNames = c('symptom_load','connectedness'),
-                   n.manifest = 2, manifestNames = c('A1b','A8'),
-                   LAMBDA=diag(2))
+                   n.latent = 3, latentNames = c("symptom_load", "acceptance", "defusion"),
+                   n.manifest = 3, manifestNames = c("A1b", "A2", "A3"),
+                   LAMBDA=diag(3))
 model_1$pars$indvarying <- FALSE
 
 # Model fitting
-fit_1 <- ctStanFit(datalong = participant_fewestNAs_data, ctstanmodel = model_1, priors = FALSE, optimize = TRUE) 
+fit_1 <- ctStanFit(datalong = dat_fewestesNAs, ctstanmodel = model_1, priors = FALSE, optimize = TRUE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
 summary(fit_1)
+summary(fit_1)$popmeans
 
 # continuous parameters
 ctStanContinuousPars(fit_1, calcfunc = quantile,
@@ -187,10 +198,417 @@ model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
 model_all$pars$indvarying <- FALSE
 
 # Model fitting
-fit_all <- ctStanFit(datalong = dat_scaled, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
+fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
 summary(fit_all)
 
 ```
+
+
+## Missing values
+
+### Missings summary
+
+```{r}
+# Overall missings summary
+summary_missings <- dat_aggregated %>%
+    summarise(
+      total = n(),
+      completed = sum(interactionStatus == "Completed"),
+      ignored = sum(interactionStatus == "Ignored"),
+      incomplete = sum(interactionStatus == "Incomplete"),
+      completed_rate = mean(interactionStatus == "Completed"),
+      ignored_rate = mean(interactionStatus == "Ignored"),
+      incomplete_rate = mean(interactionStatus == "Incomplete")
+    )
+
+summary_missings
+
+# Participant summary
+participant_missings <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  summarise(
+    queries_total = n(),
+    n_completed = sum(interactionStatus == "Completed"),
+    n_ignored = sum(interactionStatus == "Ignored"),
+    n_incomplete = sum(interactionStatus == "Incomplete"),
+    completion_rate = mean(interactionStatus == "Completed"),
+    study_duration_days = round(as.numeric(difftime(max(variableCreatedDateTime), 
+                                               min(variableCreatedDateTime), 
+                                               units = "days")), 0)
+  ) %>%
+  arrange(desc(completion_rate))
+
+participant_missings
+
+```
+
+### Heat map missings over time
+
+```{r}
+# Binary completion
+dat_aggregated <- dat_aggregated %>%
+  mutate(completed_binary = ifelse(interactionStatus == "Completed", 1, 0))
+
+# Time index
+dat_aggregated <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  arrange(time_hours) %>%
+  mutate(query_number = row_number()) %>%
+  ungroup()
+
+# Heatmap per participant
+ggplot(dat_aggregated, aes(x = query_number, y = pseudonym, fill = factor(completed_binary))) +
+  geom_tile() +
+  scale_fill_manual(values = c("0" = "red", "1" = "lightblue"),
+                    labels = c("Missing", "Completed"),
+                    name = "Status") +
+  labs(title = "Completion Pattern by Participant",
+       x = "Query Number",
+       y = "Participant") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 6))
+```
+
+### Plots completion trend, time of day, day of week
+
+```{r}
+# Completion rate over study period
+daily_completion <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  mutate(
+    date = as.Date(variableCreatedDateTime),
+    study_day = as.numeric(difftime(date, min(date), units = "days"))
+  )
+
+# Daily completion rate
+daily_completion <- daily_completion %>%
+  group_by(study_day) %>%
+  summarise(
+    completion_rate = mean(interactionStatus == "Completed"),
+    n_queries = n()
+  )
+
+ggplot(daily_completion, aes(x = study_day, y = completion_rate)) +
+  geom_line(color = "#2166ac", size = 1) +
+  geom_smooth(method = "loess", se = TRUE, color = "#b2182b") +
+  labs(title = "Completion Rate Over Study Duration",
+       x = "Study Day",
+       y = "Completion Rate") +
+  theme_minimal()
+
+# Time of day patterns
+hourly_completion <- dat_aggregated %>%
+  mutate(hour = hour(variableCreatedDateTime))
+
+hourly_completion <- hourly_completion %>%
+  group_by(hour) %>%
+  summarise(
+    completion_rate = mean(interactionStatus == "Completed"),
+    n_queries = n()
+  )
+
+ggplot(hourly_completion, aes(x = hour, y = completion_rate)) +
+  geom_col(fill = "#4575b4") +
+  labs(title = "Completion Rate by Hour of Day",
+       x = "Hour of Day",
+       y = "Completion Rate") +
+  scale_x_continuous(breaks = 0:23) +
+  theme_minimal()
+
+# Weekday patterns
+dat_aggregated <- dat_aggregated %>%
+  mutate(weekday = wday(variableCreatedDateTime, label = TRUE))
+
+weekday_completion <- dat_aggregated %>%
+  group_by(weekday) %>%
+  summarise(
+    completion_rate = mean(interactionStatus == "Completed"),
+    n_queries = n()
+  )
+
+ggplot(weekday_completion, aes(x = weekday, y = completion_rate)) +
+  geom_col(fill = "#4575b4") +
+  labs(title = "Completion Rate by Day of Week",
+       x = "Day of Week",
+       y = "Completion Rate") +
+  theme_minimal()
+
+```
+
+### Test for trends, weekend effects, autocorrelation
+
+```{r}
+# Test temporal trend 
+#cor.test(daily_completion$study_day, 
+#         daily_completion$completion_rate)
+
+# Test weekend differences -> no difference
+weekday_test <- dat_aggregated %>%
+  mutate(weekend = weekday %in% c("Sat", "Sun"))
+
+t.test(completed_binary ~ weekend, data = weekday_test)
+
+# Test autocorrelation in missings -> significant autocorr (but dropouts!)
+dat_lag <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  arrange(variableCreatedDateTime) %>%
+  mutate(
+    prev_completed = lag(completed_binary)
+  ) %>%
+  ungroup()
+
+table(dat_lag$completed_binary, dat_lag$prev_completed)
+chisq.test(table(dat_lag$completed_binary, dat_lag$prev_completed))
+
+```
+
+### MNAR?
+
+```{r}
+# Lagged missings
+dat_lag <- dat_lag %>%
+  arrange(pseudonym, variableCreatedDateTime) %>%
+  group_by(pseudonym) %>%
+  mutate(
+    # Ignored next 
+    next_ignored = lead(interactionStatus == "Ignored")
+  ) %>%
+  ungroup()
+
+# Do previous scores predict next query being ignored?
+model_mood <- glm(next_ignored ~ A1b, 
+                  data = dat_lag, 
+                  family = binomial)
+summary(model_mood)
+
+# Visualization
+ggplot(dat_lag, aes(x = A1b, y = as.numeric(next_ignored))) +
+  geom_jitter(height = 0.05, alpha = 0.3, color = "lightblue") +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"),
+              color = "red", size = 1.5) +
+  labs(title = "Previous Symptom load Score Predicting Missingness",
+       x = "Previous Symptom load Score",
+       y = "Query Being Ignored") +
+  theme_minimal()
+
+# Test multiple preds
+fit_acc_def <- glm(next_ignored ~ A1b + A2 + A3,
+               data = dat_lag, 
+               family = binomial)
+summary(fit_acc_def)
+
+fit_all <- glm(next_ignored ~ A1b + A2 + A3 + A4 + A5 + A6 + A7,
+               data = dat_lag, 
+               family = binomial)
+summary(fit_all)
+
+```
+
+### Effect of situation
+
+```{r}
+# differences in next missings depending on current situation
+
+by_K1 <- dat_lag %>%
+  group_by(K1) %>%
+  summarise(next_miss = mean(next_ignored, na.rm = TRUE) * 100,
+            n = n(), .groups = "drop") %>%
+  mutate(next_miss = round(next_miss, 1))
+
+by_K2 <- dat_lag %>%
+  group_by(K2) %>%
+  summarise(next_miss = mean(next_ignored, na.rm = TRUE) * 100,
+            n = n(), .groups = "drop") %>%
+  mutate(next_miss = round(next_miss, 1))
+
+# test linear effect of situation
+fit_situation <- glm(next_ignored ~ K1 * K2,
+                     data = dat_lag, 
+                     family = binomial)
+summary(fit_situation)
+
+```
+
+### Littles MCAR test
+
+```{r}
+# Littles MCAR test (but removes missings on all variables!!!)
+na.test(dat_aggregated[,c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "K1", "K2", "A6", "A2", "A5", "A7")])
+```
+
+## Trends
+
+### Trends: Symptom load, Acceptance, Defusion
+
+```{r}
+# Mean per time point -> this ignores the missings
+overall_trends <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  group_by(query_number) %>%
+  summarise(
+    mean_symptom_load = mean(A1b, na.rm = TRUE),
+    se_symptom_load = sd(A1b, na.rm = TRUE) / sqrt(n()),
+    mean_acceptance = mean(A2, na.rm = TRUE),
+    se_acceptance = sd(A2, na.rm = TRUE) / sqrt(n()),
+    mean_defusion = mean(A3, na.rm = TRUE),
+    se_defusion = sd(A3, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup()
+
+# Mean trend symptom load
+ggplot(overall_trends, aes(x = query_number, y = mean_symptom_load)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  geom_ribbon(aes(ymin = mean_symptom_load - 1.96 * se_symptom_load,
+                  ymax = mean_symptom_load + 1.96 * se_symptom_load),
+              alpha = 0.3, fill = "darkblue") +
+  labs(title = "Trend Symptom Load",
+       x = "Query",
+       y = "Mean Symptom Load") +
+  theme_minimal()
+
+# SE trend symptom load
+ggplot(overall_trends, aes(x = query_number, y = se_symptom_load)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  labs(title = "SE Trend Symptom Load",
+       x = "Query",
+       y = "SE Symptom Load") +
+  theme_minimal()
+
+# Multiple trends
+overall_trends_long <- overall_trends %>%
+  select(query_number, mean_symptom_load, mean_acceptance, mean_defusion) %>%
+  pivot_longer(cols = starts_with("mean_"),
+               names_to = "variable",
+               values_to = "mean_value",
+               names_prefix = "mean_") %>%
+  mutate(variable = str_to_title(variable))
+
+ggplot(overall_trends_long, aes(x = query_number, y = mean_value, color = variable)) +
+  geom_line(size = 0.2) +
+  geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Overall Trends in Key Variables",
+       x = "Query",
+       y = "Mean",
+       color = "Variable") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Tests linear trends
+fit_trend <- lm(mean_symptom_load ~ query_number, data = overall_trends)
+summary(fit_trend)
+
+fit_trend <- lm(mean_symptom_load ~ query_number, 
+                data = overall_trends[overall_trends$query_number<=200,])
+summary(fit_trend)
+
+significant_trends <- function(score, alpha){
+  return()
+}
+
+
+
+```
+
+### Trends per participant
+
+```{r}
+dat_P02 <- dat_lag %>%
+  filter(pseudonym == "NBMP-P02")
+
+# Mean trend symptom load
+ggplot(dat_P02, aes(x = query_number, y = A1b)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  labs(title = "Trend Symptom Load",
+       x = "Query",
+       y = "Symptom Load score") +
+  theme_minimal()
+
+# Multiple trends
+overall_trends_p02_long <- dat_P02 %>%
+  select(query_number, A1b, A2, A3) %>%
+  pivot_longer(cols = starts_with("A"),
+               names_to = "variable",
+               values_to = "score",
+               names_prefix = "score_") %>%
+  mutate(variable = str_to_title(variable))
+
+ggplot(overall_trends_p02_long, aes(x = query_number, y = score, color = variable)) +
+  geom_line(size = 0.2) +
+  geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Overall Trends NBMP-P02",
+       x = "Query",
+       y = "Score",
+       color = "Variable") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Linear trends
+fit_trend_P02 <- lm(A1b ~ query_number, data = dat_P02)
+summary(fit_trend_P02)
+
+```
+
+```{r}
+# trend symptom load
+ggplot(dat_fewestesNAs, aes(x = query_number, y = A1b)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  labs(title = "Trend Symptom Load",
+       x = "Query",
+       y = "Mean Symptom Load") +
+  theme_minimal()
+
+# Multiple trends
+overall_trends_pilot1_long <- dat_fewestesNAs %>%
+  select(query_number, A1b, A2, A3) %>%
+  pivot_longer(cols = starts_with("A"),
+               names_to = "variable",
+               values_to = "mean_value",
+               names_prefix = "mean_") %>%
+  mutate(variable = str_to_title(variable))
+
+ggplot(overall_trends_pilot1_long, aes(x = query_number, y = mean_value, color = variable)) +
+  geom_line(size = 0.2) +
+  geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Overall Trends Pilot1",
+       x = "Query",
+       y = "SCore",
+       color = "Variable") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Linear trends
+fit_trend_pilot1 <- lm(A1b ~ query_number, data = dat_fewestesNAs)
+summary(fit_trend_pilot1)
+
+```
+
+### Weekly trends
+
+```{r}
+weekly_trends <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  group_by(weekday) %>%
+  summarise(
+    mean_A1b = mean(A1b, na.rm = TRUE),
+    se_A1b = sd(A1b, na.rm = TRUE) / sqrt(n()),
+    n = n()
+  ) %>%
+  ungroup()
+
+ggplot(weekly_trends, aes(x = weekday, y = mean_A1b)) +
+  geom_point(size = 3, color = "blue") +
+  geom_errorbar(aes(ymin = mean_A1b - 1.96 * se_A1b,
+                    ymax = mean_A1b + 1.96 * se_A1b),
+                width = 0.2) +
+  labs(title = "Symptom Load Weekly Trend",
+       x = "Weekday",
+       y = "Mean Symptom load Score") +
+  theme_minimal()
+```
+
