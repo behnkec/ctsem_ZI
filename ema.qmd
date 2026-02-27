@@ -1,5 +1,5 @@
 ---
-title: "ema"
+title: "ctSEM ema"
 format: html
 ---
 
@@ -10,13 +10,15 @@ library(readr)
 library(tidyverse)
 library(ctsem)
 library(misty)
+library(lme4)
+library(patchwork)
 ```
 
 ## Data preparation
 
 ```{r, message=FALSE}
 # Load data
-dat_ema <- read_csv("00000000-0000-0006-0000-000000000006.csv")
+dat_ema <- read_csv("00000000-0000-0007-0000-000000000007.csv")
 dat_ema1 <- read_csv("00000000-0000-0003-0000-000000000003.csv")
 
 # exclude non-participants
@@ -122,6 +124,16 @@ dat_aggregated <- dat_aggregated %>%
 # dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
 ```
 
+```{r}
+# Data cleaning: remove rows that only contain 50s
+n_all_50 <- dat_aggregated %>%
+  filter(if_all(all_of(act_scores), ~ .x == 50)) 
+
+#dat_aggregated <- dat_aggregated %>%
+#  filter(!if_all(all_of(act_scores), ~ .x == 50))
+```
+
+
 ## Descriptives
 
 ```{r}
@@ -186,23 +198,61 @@ ctStanDiscretePars(fit_1, plot = TRUE, # regression coefficient for particular t
 
 ```
 
-### All participants and all covariates without context
 
-```{r, eval=FALSE}
-pred <- c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7")
-# Model specification
+### All participants and ACT modules, no priors
+
+```{r}
 model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
-                   n.latent = length(pred)-1, latentNames = c("A1", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
-                   n.manifest = length(pred), manifestNames = c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
-                   LAMBDA = matrix(c(1,1, rep(c(rep(0, length(pred)), 1), length(pred)-2)), nrow = length(pred)))
-model_all$pars$indvarying <- FALSE
+                     n.latent = 7, 
+                     latentNames = c("symptom_load", "acceptance", "defusion", "presence", "self_context", "values", "commited_action"),
+                     n.manifest = 7, 
+                     manifestNames = c("A1b", "A2", "A3", "A4", "A5", "A6", "A7"),
+                     LAMBDA = diag(7))
 
 # Model fitting
-fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
+fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = FALSE, optimize = TRUE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
 summary(fit_all)
+```
+
+### All participants and ACT modules, with priors
+
+```{r}
+model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                     n.latent = 7, 
+                     latentNames = c("symptom_load", "acceptance", "defusion", "presence", "self_context", "values", "committed_action"),
+                     n.manifest = 7, 
+                     manifestNames = c("A1b", "A2", "A3", "A4", "A5", "A6", "A7"),
+                     LAMBDA = diag(7))
+
+# Model fitting
+fit_all_hmc <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = FALSE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_all_hmc)
+
+summary(fit_all_hmc)$popmeans
+
+# continuous parameters
+ctStanContinuousPars(fit_all_hmc, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5))$DRIFT
+ctStanContinuousPars(fit_all_hmc, calcfunc = mean)$DRIFT
+
+plot(fit_all_hmc)
+
+ctStanDiscretePars(fit_all_hmc, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
+ctStanPlotPost(obj = fit_all_hmc, rows = 3) # posterior vs prior (here no priors)
+
+ctKalman(fit_all_hmc,
+         timerange = "asdata",
+         timestep = "auto",
+         plot = TRUE, 
+         plotcontrol = list(xaxs = 'i', main = "Predicted"))
 
 ```
 
@@ -257,6 +307,7 @@ dat_aggregated <- dat_aggregated %>%
   group_by(pseudonym) %>%
   arrange(time_hours) %>%
   mutate(query_number = row_number()) %>%
+  mutate(study_day = ceiling(time_days)) %>%
   ungroup()
 
 # Heatmap per participant
@@ -276,13 +327,6 @@ ggplot(dat_aggregated, aes(x = query_number, y = pseudonym, fill = factor(comple
 
 ```{r}
 # Completion rate over study period
-daily_completion <- dat_aggregated %>%
-  group_by(pseudonym) %>%
-  mutate(
-    date = as.Date(variableCreatedDateTime),
-    study_day = as.numeric(difftime(date, min(date), units = "days"))
-  )
-
 # Daily completion rate
 daily_completion <- daily_completion %>%
   group_by(study_day) %>%
@@ -306,7 +350,7 @@ hourly_completion <- dat_aggregated %>%
 hourly_completion <- hourly_completion %>%
   group_by(hour) %>%
   summarise(
-    completion_rate = mean(interactionStatus == "Completed"),
+    completion_rate = sum(interactionStatus == "Completed"),
     n_queries = n()
   )
 
@@ -325,7 +369,7 @@ dat_aggregated <- dat_aggregated %>%
 weekday_completion <- dat_aggregated %>%
   group_by(weekday) %>%
   summarise(
-    completion_rate = mean(interactionStatus == "Completed"),
+    completion_rate = sum(interactionStatus == "Completed"),
     n_queries = n()
   )
 
@@ -345,7 +389,7 @@ ggplot(weekday_completion, aes(x = weekday, y = completion_rate)) +
 #cor.test(daily_completion$study_day, 
 #         daily_completion$completion_rate)
 
-# Test weekend differences -> no difference
+# Test weekend differences
 weekday_test <- dat_aggregated %>%
   mutate(weekend = weekday %in% c("Sat", "Sun"))
 
@@ -363,6 +407,20 @@ dat_lag <- dat_aggregated %>%
 table(dat_lag$completed_binary, dat_lag$prev_completed)
 chisq.test(table(dat_lag$completed_binary, dat_lag$prev_completed))
 
+# Test autocorrelation in missings without dropouts
+dat_lag_no_dropouts <- dat_lag %>%
+  arrange(pseudonym, variableCreatedDateTime) %>%
+  group_by(pseudonym) %>%
+  mutate(
+    valid_future = rev(cumany(rev(interactionStatus %in% c("Completed", "Incomplete"))))
+  ) %>%
+  filter(valid_future) %>%
+  select(-valid_future) %>%
+  ungroup()
+
+table(dat_lag_no_dropouts$completed_binary, dat_lag_no_dropouts$prev_completed)
+chisq.test(table(dat_lag_no_dropouts$completed_binary, dat_lag_no_dropouts$prev_completed))
+
 ```
 
 ### MNAR?
@@ -379,9 +437,9 @@ dat_lag <- dat_lag %>%
   ungroup()
 
 # Do previous scores predict next query being ignored?
-model_mood <- glm(next_ignored ~ A1b, 
-                  data = dat_lag, 
-                  family = binomial)
+model_mood <- glmer(next_ignored ~ A1b + (1|pseudonym), 
+                    data = dat_lag, 
+                    family = binomial)
 summary(model_mood)
 
 # Visualization
@@ -395,14 +453,9 @@ ggplot(dat_lag, aes(x = A1b, y = as.numeric(next_ignored))) +
   theme_minimal()
 
 # Test multiple preds
-fit_acc_def <- glm(next_ignored ~ A1b + A2 + A3,
-               data = dat_lag, 
-               family = binomial)
-summary(fit_acc_def)
-
-fit_all <- glm(next_ignored ~ A1b + A2 + A3 + A4 + A5 + A6 + A7,
-               data = dat_lag, 
-               family = binomial)
+fit_all <- glmer(next_ignored ~ A1b + A2 + A3 + A4 + A5 + A6 + A7 + (1|pseudonym),
+                 data = dat_lag, 
+                 family = binomial)
 summary(fit_all)
 
 ```
@@ -435,7 +488,7 @@ summary(fit_situation)
 ### Littles MCAR test
 
 ```{r}
-# Littles MCAR test (but removes missings on all variables!!!)
+# Littles MCAR test (but removes missings on all variables!!!) + large data set
 na.test(dat_aggregated[,c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "K1", "K2", "A6", "A2", "A5", "A7")])
 ```
 
@@ -588,12 +641,48 @@ summary(fit_trend_pilot1)
 
 ```
 
+```{r}
+plot_trends <- function(data, variables, output_dir = "plots") {
+
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  pseudonyms <- unique(data$pseudonym)
+  
+  # one file for all plots
+  pdf(file.path(output_dir, "trends_all_participants.pdf"), width = 12, height = 14)
+
+  for (pseudo in pseudonyms) {
+
+    dat_p <- data %>% filter(pseudonym == pseudo)
+
+    # One plot per variable
+    plots <- lapply(variables, function(var) {
+      ggplot(dat_p, aes(x = query_number, y = .data[[var]])) +
+        geom_line(color = "darkblue", size = 0.5) +
+        labs(title = var, x = "Query", y = var) +
+        theme_minimal()
+    })
+
+    # Combine plots into grid
+    combined <- wrap_plots(plots, ncol = 2) +
+      plot_annotation(title = paste("Trend Overview -", pseudo))
+
+    print(combined)
+  }
+  dev.off()
+}
+
+
+plot_trends(data = dat_lag, variables = act_scores, output_dir = "plots/trends")
+```
+
+
 ### Weekly trends
 
 ```{r}
 weekly_trends <- dat_aggregated %>%
   filter(interactionStatus == "Completed") %>%
-  group_by(weekday) %>%
+  group_by(study_day) %>%
   summarise(
     mean_A1b = mean(A1b, na.rm = TRUE),
     se_A1b = sd(A1b, na.rm = TRUE) / sqrt(n()),
@@ -601,14 +690,36 @@ weekly_trends <- dat_aggregated %>%
   ) %>%
   ungroup()
 
-ggplot(weekly_trends, aes(x = weekday, y = mean_A1b)) +
-  geom_point(size = 3, color = "blue") +
-  geom_errorbar(aes(ymin = mean_A1b - 1.96 * se_A1b,
-                    ymax = mean_A1b + 1.96 * se_A1b),
-                width = 0.2) +
+ggplot(weekly_trends, aes(x = study_day, y = mean_A1b)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  geom_ribbon(aes(ymin = mean_A1b - 1.96 * se_A1b,
+                  ymax = mean_A1b + 1.96 * se_A1b),
+                alpha = 0.3, fill = "darkblue") +
   labs(title = "Symptom Load Weekly Trend",
        x = "Weekday",
        y = "Mean Symptom load Score") +
+  geom_vline(xintercept = seq(7, by = 7, length.out = 8), colour="grey", linetype = "longdash")
   theme_minimal()
+```
+
+## Brain dump
+
+
+```{r, eval=FALSE}
+pred <- c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7")
+# Model specification
+model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                   n.latent = length(pred)-1, latentNames = c("A1", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
+                   n.manifest = length(pred), manifestNames = c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
+                   LAMBDA = matrix(c(1,1, rep(c(rep(0, length(pred)), 1), length(pred)-2)), nrow = length(pred)))
+model_all$pars$indvarying <- FALSE
+
+# Model fitting
+fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_all)
+
 ```
 
