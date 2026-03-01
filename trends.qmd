@@ -1,0 +1,232 @@
+---
+title: "Analysis of Trends"
+author: "Clara Behnke"
+format: html
+---
+
+## Packages
+
+```{r, message=FALSE}
+library(readr)
+library(tidyverse)
+library(ctsem)
+library(misty)
+library(lme4)
+library(patchwork)
+```
+
+## Data preparation
+
+```{r}
+
+```
+
+## Trends: Symptom load, Acceptance, Defusion
+
+```{r}
+# Mean per time point -> this ignores the missings
+overall_trends <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  group_by(query_number) %>%
+  summarise(
+    mean_symptom_load = mean(A1b, na.rm = TRUE),
+    se_symptom_load = sd(A1b, na.rm = TRUE) / sqrt(n()),
+    mean_acceptance = mean(A2, na.rm = TRUE),
+    se_acceptance = sd(A2, na.rm = TRUE) / sqrt(n()),
+    mean_defusion = mean(A3, na.rm = TRUE),
+    se_defusion = sd(A3, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup()
+
+# Mean trend symptom load
+ggplot(overall_trends, aes(x = query_number, y = mean_symptom_load)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  geom_ribbon(aes(ymin = mean_symptom_load - 1.96 * se_symptom_load,
+                  ymax = mean_symptom_load + 1.96 * se_symptom_load),
+              alpha = 0.3, fill = "darkblue") +
+  labs(title = "Trend Symptom Load",
+       x = "Query",
+       y = "Mean Symptom Load") +
+  theme_minimal()
+
+# SE trend symptom load
+ggplot(overall_trends, aes(x = query_number, y = se_symptom_load)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  labs(title = "SE Trend Symptom Load",
+       x = "Query",
+       y = "SE Symptom Load") +
+  theme_minimal()
+
+# Multiple trends
+overall_trends_long <- overall_trends %>%
+  select(query_number, mean_symptom_load, mean_acceptance, mean_defusion) %>%
+  pivot_longer(cols = starts_with("mean_"),
+               names_to = "variable",
+               values_to = "mean_value",
+               names_prefix = "mean_") %>%
+  mutate(variable = str_to_title(variable))
+
+ggplot(overall_trends_long, aes(x = query_number, y = mean_value, color = variable)) +
+  geom_line(size = 0.2) +
+  geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Overall Trends in Key Variables",
+       x = "Query",
+       y = "Mean",
+       color = "Variable") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Tests linear trends
+fit_trend <- lm(mean_symptom_load ~ query_number, data = overall_trends)
+summary(fit_trend)
+
+fit_trend <- lm(mean_symptom_load ~ query_number, 
+                data = overall_trends[overall_trends$query_number<=200,])
+summary(fit_trend)
+
+significant_trends <- function(score, alpha){
+  return()
+}
+
+
+
+```
+
+## Trends per participant
+
+```{r}
+dat_P02 <- dat_lag %>%
+  filter(pseudonym == "NBMP-P02")
+
+# Mean trend symptom load
+ggplot(dat_P02, aes(x = query_number, y = A1b)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  labs(title = "Trend Symptom Load",
+       x = "Query",
+       y = "Symptom Load score") +
+  theme_minimal()
+
+# Multiple trends
+overall_trends_p02_long <- dat_P02 %>%
+  select(query_number, A1b, A2, A3) %>%
+  pivot_longer(cols = starts_with("A"),
+               names_to = "variable",
+               values_to = "score",
+               names_prefix = "score_") %>%
+  mutate(variable = str_to_title(variable))
+
+ggplot(overall_trends_p02_long, aes(x = query_number, y = score, color = variable)) +
+  geom_line(size = 0.2) +
+  geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Overall Trends NBMP-P02",
+       x = "Query",
+       y = "Score",
+       color = "Variable") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Linear trends
+fit_trend_P02 <- lm(A1b ~ query_number, data = dat_P02)
+summary(fit_trend_P02)
+
+```
+
+```{r}
+# trend symptom load
+ggplot(dat_fewestesNAs, aes(x = query_number, y = A1b)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  labs(title = "Trend Symptom Load",
+       x = "Query",
+       y = "Mean Symptom Load") +
+  theme_minimal()
+
+# Multiple trends
+overall_trends_pilot1_long <- dat_fewestesNAs %>%
+  select(query_number, A1b, A2, A3) %>%
+  pivot_longer(cols = starts_with("A"),
+               names_to = "variable",
+               values_to = "mean_value",
+               names_prefix = "mean_") %>%
+  mutate(variable = str_to_title(variable))
+
+ggplot(overall_trends_pilot1_long, aes(x = query_number, y = mean_value, color = variable)) +
+  geom_line(size = 0.2) +
+  geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Overall Trends Pilot1",
+       x = "Query",
+       y = "SCore",
+       color = "Variable") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+# Linear trends
+fit_trend_pilot1 <- lm(A1b ~ query_number, data = dat_fewestesNAs)
+summary(fit_trend_pilot1)
+
+```
+
+```{r}
+plot_trends <- function(data, variables, output_dir = "plots") {
+
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  pseudonyms <- unique(data$pseudonym)
+  
+  # one file for all plots
+  pdf(file.path(output_dir, "trends_all_participants.pdf"), width = 12, height = 14)
+
+  for (pseudo in pseudonyms) {
+
+    dat_p <- data %>% filter(pseudonym == pseudo)
+
+    # One plot per variable
+    plots <- lapply(variables, function(var) {
+      ggplot(dat_p, aes(x = query_number, y = .data[[var]])) +
+        geom_line(color = "darkblue", size = 0.5) +
+        labs(title = var, x = "Query", y = var) +
+        theme_minimal()
+    })
+
+    # Combine plots into grid
+    combined <- wrap_plots(plots, ncol = 2) +
+      plot_annotation(title = paste("Trend Overview -", pseudo))
+
+    print(combined)
+  }
+  dev.off()
+}
+
+
+plot_trends(data = dat_lag, variables = act_scores, output_dir = "plots/trends")
+```
+
+
+## Weekly trends
+
+```{r}
+weekly_trends <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  group_by(study_day) %>%
+  summarise(
+    mean_A1b = mean(A1b, na.rm = TRUE),
+    se_A1b = sd(A1b, na.rm = TRUE) / sqrt(n()),
+    n = n()
+  ) %>%
+  ungroup()
+
+ggplot(weekly_trends, aes(x = study_day, y = mean_A1b)) +
+  geom_line(color = "darkblue", size = 0.5) +
+  geom_ribbon(aes(ymin = mean_A1b - 1.96 * se_A1b,
+                  ymax = mean_A1b + 1.96 * se_A1b),
+                alpha = 0.3, fill = "darkblue") +
+  labs(title = "Symptom Load Weekly Trend",
+       x = "Weekday",
+       y = "Mean Symptom load Score") +
+  geom_vline(xintercept = seq(7, by = 7, length.out = 8), colour="grey", linetype = "longdash")
+  theme_minimal()
+```
+
+

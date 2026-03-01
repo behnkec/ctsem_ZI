@@ -1,0 +1,151 @@
+---
+title: "Data Analysis with ctSEM models"
+format: html
+author: Clara Behnke
+---
+
+## Load packages
+
+```{r, message=FALSE}
+library(readr)
+library(tidyverse)
+library(misty)
+library(lme4)
+```
+
+## Data preparation
+
+```{r}
+dat_aggregated <- read_csv("aggregated_data_triggered_ZI.csv")
+```
+
+## Single participant
+
+```{r}
+# participant with highest number of completed questionnaires
+ID_fewestNAs <- dat_aggregated %>%
+  filter(interactionStatus == "Completed") %>%
+  count(pseudonym, sort = TRUE) %>%
+  slice(1) %>%
+  pull(pseudonym)
+
+dat_fewestesNAs <- dat_aggregated %>%
+  filter(pseudonym == ID_fewestNAs)
+
+dat_fewestesNAs[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_fewestesNAs[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
+
+# Model specification
+model_1 <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                   n.latent = 3, latentNames = c("symptom_load", "acceptance", "defusion"),
+                   n.manifest = 3, manifestNames = c("A1b", "A2", "A3"),
+                   LAMBDA=diag(3))
+model_1$pars$indvarying <- FALSE
+
+# Model fitting
+fit_1 <- ctStanFit(datalong = dat_fewestesNAs, ctstanmodel = model_1, priors = FALSE, optimize = TRUE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_1)
+summary(fit_1)$popmeans
+
+# continuous parameters
+ctStanContinuousPars(fit_1, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5))$DRIFT
+ctStanContinuousPars(fit_1, calcfunc = mean)$DRIFT
+
+plot(fit_1)
+
+ctStanDiscretePars(fit_1, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
+#ctStanPlotPost(obj = fit_1, rows = 3) # posterior vs prior (here no priors)
+
+#ctKalman(fit_1,
+#         timerange = "asdata",
+#         timestep = "auto",
+#         plot = TRUE, 
+#         plotcontrol = list(xaxs = 'i', main = "Predicted"))
+
+```
+
+
+## All participants and ACT modules, no priors
+
+```{r}
+model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                     n.latent = 7, 
+                     latentNames = c("symptom_load", "acceptance", "defusion", "presence", "self_context", "values", "commited_action"),
+                     n.manifest = 7, 
+                     manifestNames = c("A1b", "A2", "A3", "A4", "A5", "A6", "A7"),
+                     LAMBDA = diag(7))
+
+# Model fitting
+fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = FALSE, optimize = TRUE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_all)
+```
+
+## All participants and ACT modules, with priors
+
+```{r}
+model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                     n.latent = 7, 
+                     latentNames = c("symptom_load", "acceptance", "defusion", "presence", "self_context", "values", "committed_action"),
+                     n.manifest = 7, 
+                     manifestNames = c("A1b", "A2", "A3", "A4", "A5", "A6", "A7"),
+                     LAMBDA = diag(7))
+
+# Model fitting
+fit_all_hmc <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = FALSE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_all_hmc)
+
+summary(fit_all_hmc)$popmeans
+
+# continuous parameters
+ctStanContinuousPars(fit_all_hmc, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5))$DRIFT
+ctStanContinuousPars(fit_all_hmc, calcfunc = mean)$DRIFT
+
+plot(fit_all_hmc)
+
+ctStanDiscretePars(fit_all_hmc, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
+ctStanPlotPost(obj = fit_all_hmc, rows = 3) # posterior vs prior (here no priors)
+
+ctKalman(fit_all_hmc,
+         timerange = "asdata",
+         timestep = "auto",
+         plot = TRUE, 
+         plotcontrol = list(xaxs = 'i', main = "Predicted"))
+
+```
+
+
+## Brain dump
+
+
+```{r, eval=FALSE}
+pred <- c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7")
+# Model specification
+model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                   n.latent = length(pred)-1, latentNames = c("A1", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
+                   n.manifest = length(pred), manifestNames = c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7"),
+                   LAMBDA = matrix(c(1,1, rep(c(rep(0, length(pred)), 1), length(pred)-2)), nrow = length(pred)))
+model_all$pars$indvarying <- FALSE
+
+# Model fitting
+fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
+# priors: True -> HMC, false -> max likelihood
+
+# Summary
+summary(fit_all)
+
+```
+

@@ -1,0 +1,254 @@
+---
+title: "Missing Values Anylsis"
+author: "Clara Behnke"
+format: html
+---
+
+## Packages
+
+```{r, message=FALSE}
+library(readr)
+library(tidyverse)
+library(misty)
+library(lme4)
+```
+
+## Data preparation
+
+```{r}
+dat_aggregated <- read_csv("aggregated_data_triggered_ZI.csv")
+```
+
+## Missings summary
+
+```{r}
+# Overall missings summary
+summary_missings <- dat_aggregated %>%
+    summarise(
+      total = n(),
+      completed = sum(interactionStatus == "Completed"),
+      ignored = sum(interactionStatus == "Ignored"),
+      incomplete = sum(interactionStatus == "Incomplete"),
+      completed_rate = mean(interactionStatus == "Completed"),
+      ignored_rate = mean(interactionStatus == "Ignored"),
+      incomplete_rate = mean(interactionStatus == "Incomplete")
+    )
+
+summary_missings
+
+# Participant summary
+participant_missings <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  summarise(
+    queries_total = n(),
+    n_completed = sum(interactionStatus == "Completed"),
+    n_ignored = sum(interactionStatus == "Ignored"),
+    n_incomplete = sum(interactionStatus == "Incomplete"),
+    completion_rate = mean(interactionStatus == "Completed"),
+    study_duration_days = round(as.numeric(difftime(max(variableCreatedDateTime), 
+                                               min(variableCreatedDateTime), 
+                                               units = "days")), 0)
+  ) %>%
+  arrange(desc(completion_rate))
+
+participant_missings
+
+```
+
+## Heat map missings over time
+
+```{r}
+# Binary completion
+dat_aggregated <- dat_aggregated %>%
+  mutate(completed_binary = ifelse(interactionStatus == "Completed", 1, 0))
+
+# Time index
+dat_aggregated <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  arrange(time_hours) %>%
+  mutate(query_number = row_number()) %>%
+  mutate(study_day = ceiling(time_days)) %>%
+  ungroup()
+
+# Heatmap per participant
+ggplot(dat_aggregated, aes(x = query_number, y = pseudonym, fill = factor(completed_binary))) +
+  geom_tile() +
+  scale_fill_manual(values = c("0" = "red", "1" = "lightblue"),
+                    labels = c("Missing", "Completed"),
+                    name = "Status") +
+  labs(title = "Completion Pattern by Participant",
+       x = "Query Number",
+       y = "Participant") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 6))
+```
+
+## Plots completion trend, time of day, day of week
+
+```{r}
+# Completion rate over study period
+# Daily completion rate
+daily_completion <- daily_completion %>%
+  group_by(study_day) %>%
+  summarise(
+    completion_rate = mean(interactionStatus == "Completed"),
+    n_queries = n()
+  )
+
+ggplot(daily_completion, aes(x = study_day, y = completion_rate)) +
+  geom_line(color = "#2166ac", size = 1) +
+  geom_smooth(method = "loess", se = TRUE, color = "#b2182b") +
+  labs(title = "Completion Rate Over Study Duration",
+       x = "Study Day",
+       y = "Completion Rate") +
+  theme_minimal()
+
+# Time of day patterns
+hourly_completion <- dat_aggregated %>%
+  mutate(hour = hour(variableCreatedDateTime))
+
+hourly_completion <- hourly_completion %>%
+  group_by(hour) %>%
+  summarise(
+    completion_rate = sum(interactionStatus == "Completed"),
+    n_queries = n()
+  )
+
+ggplot(hourly_completion, aes(x = hour, y = completion_rate)) +
+  geom_col(fill = "#4575b4") +
+  labs(title = "Completion Rate by Hour of Day",
+       x = "Hour of Day",
+       y = "Completion Rate") +
+  scale_x_continuous(breaks = 0:23) +
+  theme_minimal()
+
+# Weekday patterns
+dat_aggregated <- dat_aggregated %>%
+  mutate(weekday = wday(variableCreatedDateTime, label = TRUE))
+
+weekday_completion <- dat_aggregated %>%
+  group_by(weekday) %>%
+  summarise(
+    completion_rate = sum(interactionStatus == "Completed"),
+    n_queries = n()
+  )
+
+ggplot(weekday_completion, aes(x = weekday, y = completion_rate)) +
+  geom_col(fill = "#4575b4") +
+  labs(title = "Completion Rate by Day of Week",
+       x = "Day of Week",
+       y = "Completion Rate") +
+  theme_minimal()
+
+```
+
+## Test for trends, weekend effects, autocorrelation
+
+```{r}
+# Test temporal trend 
+#cor.test(daily_completion$study_day, 
+#         daily_completion$completion_rate)
+
+# Test weekend differences
+weekday_test <- dat_aggregated %>%
+  mutate(weekend = weekday %in% c("Sat", "Sun"))
+
+t.test(completed_binary ~ weekend, data = weekday_test)
+
+# Test autocorrelation in missings -> significant autocorr (but dropouts!)
+dat_lag <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  arrange(variableCreatedDateTime) %>%
+  mutate(
+    prev_completed = lag(completed_binary)
+  ) %>%
+  ungroup()
+
+table(dat_lag$completed_binary, dat_lag$prev_completed)
+chisq.test(table(dat_lag$completed_binary, dat_lag$prev_completed))
+
+# Test autocorrelation in missings without dropouts
+dat_lag_no_dropouts <- dat_lag %>%
+  arrange(pseudonym, variableCreatedDateTime) %>%
+  group_by(pseudonym) %>%
+  mutate(
+    valid_future = rev(cumany(rev(interactionStatus %in% c("Completed", "Incomplete"))))
+  ) %>%
+  filter(valid_future) %>%
+  select(-valid_future) %>%
+  ungroup()
+
+table(dat_lag_no_dropouts$completed_binary, dat_lag_no_dropouts$prev_completed)
+chisq.test(table(dat_lag_no_dropouts$completed_binary, dat_lag_no_dropouts$prev_completed))
+
+```
+
+## MNAR?
+
+```{r}
+# Lagged missings
+dat_lag <- dat_lag %>%
+  arrange(pseudonym, variableCreatedDateTime) %>%
+  group_by(pseudonym) %>%
+  mutate(
+    # Ignored next 
+    next_ignored = lead(interactionStatus == "Ignored")
+  ) %>%
+  ungroup()
+
+# Do previous scores predict next query being ignored?
+model_mood <- glmer(next_ignored ~ A1b + (1|pseudonym), 
+                    data = dat_lag, 
+                    family = binomial)
+summary(model_mood)
+
+# Visualization
+ggplot(dat_lag, aes(x = A1b, y = as.numeric(next_ignored))) +
+  geom_jitter(height = 0.05, alpha = 0.3, color = "lightblue") +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"),
+              color = "red", size = 1.5) +
+  labs(title = "Previous Symptom load Score Predicting Missingness",
+       x = "Previous Symptom load Score",
+       y = "Query Being Ignored") +
+  theme_minimal()
+
+# Test multiple preds
+fit_all <- glmer(next_ignored ~ A1b + A2 + A3 + A4 + A5 + A6 + A7 + (1|pseudonym),
+                 data = dat_lag, 
+                 family = binomial)
+summary(fit_all)
+
+```
+
+## Effect of situation
+
+```{r}
+# differences in next missings depending on current situation
+
+by_K1 <- dat_lag %>%
+  group_by(K1) %>%
+  summarise(next_miss = mean(next_ignored, na.rm = TRUE) * 100,
+            n = n(), .groups = "drop") %>%
+  mutate(next_miss = round(next_miss, 1))
+
+by_K2 <- dat_lag %>%
+  group_by(K2) %>%
+  summarise(next_miss = mean(next_ignored, na.rm = TRUE) * 100,
+            n = n(), .groups = "drop") %>%
+  mutate(next_miss = round(next_miss, 1))
+
+# test linear effect of situation
+fit_situation <- glm(next_ignored ~ K1 * K2,
+                     data = dat_lag, 
+                     family = binomial)
+summary(fit_situation)
+
+```
+
+## Littles MCAR test
+
+```{r}
+# Littles MCAR test (but removes missings on all variables!!!) + large data set
+na.test(dat_aggregated[,c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "K1", "K2", "A6", "A2", "A5", "A7")])
+```
+
