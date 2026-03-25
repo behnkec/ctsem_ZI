@@ -1,24 +1,24 @@
 ---
 title: "Analysis of Trends"
 author: "Clara Behnke"
-format: html
+format: 
+  pdf:
+    code-block-border-left: false
+execute: 
+  warning: false
 ---
 
-## Packages
+## Load Packages and data set
 
-```{r, message=FALSE}
+```{r}
 library(readr)
 library(tidyverse)
-library(ctsem)
 library(misty)
-library(lme4)
 library(patchwork)
 ```
 
-## Data preparation
-
 ```{r}
-
+dat_aggregated <- read_csv("aggregated_data_triggered_ZI.csv")
 ```
 
 ## Trends: Symptom load, Acceptance, Defusion
@@ -96,7 +96,7 @@ significant_trends <- function(score, alpha){
 ## Trends per participant
 
 ```{r}
-dat_P02 <- dat_lag %>%
+dat_P02 <- dat_aggregated %>%
   filter(pseudonym == "NBMP-P02")
 
 # Mean trend symptom load
@@ -135,15 +135,18 @@ summary(fit_trend_P02)
 
 ```{r}
 # trend symptom load
-ggplot(dat_fewestesNAs, aes(x = query_number, y = A1b)) +
+dat_NBMP_P14 <- dat_aggregated %>%
+  filter(pseudonym == "NBMP-P14")
+
+ggplot(dat_NBMP_P14, aes(x = query_number, y = A1b)) +
   geom_line(color = "darkblue", size = 0.5) +
-  labs(title = "Trend Symptom Load",
+  labs(title = "Trend Symptom Load NBMP-P14",
        x = "Query",
        y = "Mean Symptom Load") +
   theme_minimal()
 
 # Multiple trends
-overall_trends_pilot1_long <- dat_fewestesNAs %>%
+overall_trends_NBMP_P14_long <- dat_NBMP_P14 %>%
   select(query_number, A1b, A2, A3) %>%
   pivot_longer(cols = starts_with("A"),
                names_to = "variable",
@@ -151,11 +154,11 @@ overall_trends_pilot1_long <- dat_fewestesNAs %>%
                names_prefix = "mean_") %>%
   mutate(variable = str_to_title(variable))
 
-ggplot(overall_trends_pilot1_long, aes(x = query_number, y = mean_value, color = variable)) +
+ggplot(overall_trends_NBMP_P14_long, aes(x = query_number, y = mean_value, color = variable)) +
   geom_line(size = 0.2) +
   geom_smooth(method = "loess", alpha = 0.05, size = 0.5) +
   scale_color_brewer(palette = "Set1") +
-  labs(title = "Overall Trends Pilot1",
+  labs(title = "Overall Trends NBMP-P14",
        x = "Query",
        y = "SCore",
        color = "Variable") +
@@ -163,8 +166,8 @@ ggplot(overall_trends_pilot1_long, aes(x = query_number, y = mean_value, color =
   theme(legend.position = "right")
 
 # Linear trends
-fit_trend_pilot1 <- lm(A1b ~ query_number, data = dat_fewestesNAs)
-summary(fit_trend_pilot1)
+fit_trend_NBMP_P14 <- lm(A1b ~ query_number, data = dat_NBMP_P14)
+summary(fit_trend_NBMP_P14)
 
 ```
 
@@ -187,6 +190,7 @@ plot_trends <- function(data, variables, output_dir = "plots") {
       ggplot(dat_p, aes(x = query_number, y = .data[[var]])) +
         geom_line(color = "darkblue", size = 0.5) +
         labs(title = var, x = "Query", y = var) +
+        ylim(0, 100) +
         theme_minimal()
     })
 
@@ -199,8 +203,9 @@ plot_trends <- function(data, variables, output_dir = "plots") {
   dev.off()
 }
 
+act_scores <- c("A1b", "A3", "A4", "A6", "A2", "A5", "A7")
 
-plot_trends(data = dat_lag, variables = act_scores, output_dir = "plots/trends")
+plot_trends(data = dat_aggregated, variables = act_scores, output_dir = "plots/trends")
 ```
 
 
@@ -229,4 +234,53 @@ ggplot(weekly_trends, aes(x = study_day, y = mean_A1b)) +
   theme_minimal()
 ```
 
+```{r}
+plot_trends_days <- function(data, variables, output_dir = "plots") {
 
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  pseudonyms <- unique(data$pseudonym)
+  
+  # one file for all plots
+  pdf(file.path(output_dir, "trends_all_participants_days.pdf"), width = 12, height = 14)
+
+  for (pseudo in pseudonyms) {
+
+    dat_p <- data %>% filter(pseudonym == pseudo)
+
+  plots <- lapply(variables, function(var) {
+
+    # Aggregate over study days for this participant and variable
+    dat_by_day <- dat_p %>%
+      filter(interactionStatus == "Completed") %>%
+      group_by(study_day) %>%
+      summarise(
+        mean_var = mean(.data[[var]], na.rm = TRUE),
+        se_var   = sd(.data[[var]], na.rm = TRUE) / sqrt(n()),
+        .groups  = "drop"
+      )
+
+    ggplot(dat_by_day, aes(x = study_day, y = mean_var)) +
+      geom_point(color = "darkblue", size = 0.5) +
+      geom_line(color = "lightblue", size = 0.5) +
+      geom_vline(xintercept = seq(7, by = 7, length.out = 8),
+                 colour = "grey", linetype = "longdash") +
+      labs(title = var, x = "Study Day", y = paste("Mean", var)) +
+      ylim(0, 100) +
+      theme_minimal()
+  })
+
+
+    # Combine plots into grid
+    combined <- wrap_plots(plots, ncol = 2) +
+      plot_annotation(title = paste("Trend Overview by day -", pseudo))
+
+    print(combined)
+  }
+  dev.off()
+}
+
+act_scores <- c("A1b", "A3", "A4", "A6", "A2", "A5", "A7")
+
+plot_trends_days(data = dat_aggregated, variables = act_scores, output_dir = "plots/trends")
+```

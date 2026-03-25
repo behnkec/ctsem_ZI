@@ -1,22 +1,30 @@
 ---
 title: "Data Analysis with ctSEM models"
-format: html
-author: Clara Behnke
+author: "Clara Behnke"
+format: 
+  pdf:
+    code-block-border-left: false
+execute: 
+  warning: false
 ---
 
-## Load packages
+## Load packages and data set
 
-```{r, message=FALSE}
+```{r}
 library(readr)
 library(tidyverse)
-library(misty)
-library(lme4)
+library(ctsem)
 ```
-
-## Data preparation
 
 ```{r}
 dat_aggregated <- read_csv("aggregated_data_triggered_ZI.csv")
+```
+
+## Grand mean centering and scaling
+
+```{r}
+dat_aggregated_c <- dat_aggregated %>%
+  mutate(across(c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7"), scale)) 
 ```
 
 ## Single participant
@@ -32,7 +40,9 @@ ID_fewestNAs <- dat_aggregated %>%
 dat_fewestesNAs <- dat_aggregated %>%
   filter(pseudonym == ID_fewestNAs)
 
-dat_fewestesNAs[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_fewestesNAs[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
+# individual centering and scaling
+dat_fewestesNAs_c <- dat_fewestesNAs %>%
+  mutate(across(c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7"), scale)) 
 
 # Model specification
 model_1 <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
@@ -42,7 +52,7 @@ model_1 <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
 model_1$pars$indvarying <- FALSE
 
 # Model fitting
-fit_1 <- ctStanFit(datalong = dat_fewestesNAs, ctstanmodel = model_1, priors = FALSE, optimize = TRUE) 
+fit_1 <- ctStanFit(datalong = dat_fewestesNAs_c, ctstanmodel = model_1, priors = FALSE, optimize = TRUE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
@@ -54,7 +64,7 @@ ctStanContinuousPars(fit_1, calcfunc = quantile,
   calcfuncargs = list(probs = 0.5))$DRIFT
 ctStanContinuousPars(fit_1, calcfunc = mean)$DRIFT
 
-plot(fit_1)
+plot(fit_1, wait = FALSE)
 
 ctStanDiscretePars(fit_1, plot = TRUE, # regression coefficient for particular time intervals
                    indices = 'CR') # cross effects (AR would be auto effects)
@@ -81,16 +91,31 @@ model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
                      LAMBDA = diag(7))
 
 # Model fitting
-fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = FALSE, optimize = TRUE) 
-# priors: True -> HMC, false -> max likelihood
+fit_all <- ctStanFit(datalong = dat_aggregated_c, ctstanmodel = model_all, priors = FALSE, optimize = TRUE) 
 
 # Summary
 summary(fit_all)
+
+summary(fit_all)$popmeans
+
+# continuous parameters
+ctStanContinuousPars(fit_all, calcfunc = quantile,
+  calcfuncargs = list(probs = 0.5))$DRIFT
+ctStanContinuousPars(fit_all, calcfunc = mean)$DRIFT
+
+ctStanDiscretePars(fit_all, plot = TRUE) + theme(legend.position = "none")
+ctKalman(your_model, plot = TRUE)
+
+ctStanDiscretePars(fit_all, plot = TRUE, # regression coefficient for particular time intervals
+                   indices = 'CR') # cross effects (AR would be auto effects)
+
 ```
 
 ## All participants and ACT modules, with priors
 
 ```{r}
+#| cache: true
+
 model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
                      n.latent = 7, 
                      latentNames = c("symptom_load", "acceptance", "defusion", "presence", "self_context", "values", "committed_action"),
@@ -99,7 +124,7 @@ model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
                      LAMBDA = diag(7))
 
 # Model fitting
-fit_all_hmc <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = FALSE) 
+fit_all_hmc <- ctStanFit(datalong = dat_aggregated_c, ctstanmodel = model_all, priors = TRUE, optimize = FALSE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
@@ -112,7 +137,7 @@ ctStanContinuousPars(fit_all_hmc, calcfunc = quantile,
   calcfuncargs = list(probs = 0.5))$DRIFT
 ctStanContinuousPars(fit_all_hmc, calcfunc = mean)$DRIFT
 
-plot(fit_all_hmc)
+plot(fit_all_hmc, wait = FALSE)
 
 ctStanDiscretePars(fit_all_hmc, plot = TRUE, # regression coefficient for particular time intervals
                    indices = 'CR') # cross effects (AR would be auto effects)
@@ -128,8 +153,248 @@ ctKalman(fit_all_hmc,
 ```
 
 
-## Brain dump
+## All participants: defusion -> symptom load
 
+### Models
+
+```{r}
+# without random intercept, time scale = hours
+model_defus <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                       n.latent = 2, 
+                       latentNames = c("symptom_load", "defusion"),
+                       n.manifest = 2, 
+                       manifestNames = c("A1b", "A3"),
+                       LAMBDA = diag(2))
+model_defus$pars$indvarying <- FALSE
+head(model_defus)
+
+# without ri, time scale = days
+model_defus_d <- ctModel(type = "stanct", time = "time_days", id = "pseudonym",
+                       n.latent = 2, 
+                       latentNames = c("symptom_load", "defusion"),
+                       n.manifest = 2, 
+                       manifestNames = c("A1b", "A3"),
+                       LAMBDA = diag(2))
+model_defus_d$pars$indvarying <- FALSE
+head(model_defus_d)
+
+# with random intercept
+model_defus_ri <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
+                          n.latent = 2, 
+                          latentNames = c("symptom_load", "defusion"),
+                          n.manifest = 2, 
+                          manifestNames = c("A1b", "A3"),
+                          LAMBDA = diag(2))
+head(model_defus_ri)
+
+# with random intercept, time scale = days
+model_defus_d_ri <- ctModel(type = "stanct", time = "time_days", id = "pseudonym",
+                          n.latent = 2, 
+                          latentNames = c("symptom_load", "defusion"),
+                          n.manifest = 2, 
+                          manifestNames = c("A1b", "A3"),
+                          LAMBDA = diag(2))
+head(model_defus_d_ri)
+```
+
+### No Random Intercept
+
+#### ML optimization
+
+```{r}
+# Model fitting
+fit_defus_ml_d <- ctStanFit(datalong = dat_aggregated_c, 
+                          ctstanmodel = model_defus_d, 
+                          priors = FALSE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_ml_d)
+
+plot(fit_defus_ml_d, wait = FALSE)
+```
+
+Error in sgd(init, fitfunc = target, parsets = parsets, nsubsets = 1,  : 
+  NA in parameter proposal!
+  
+Possible time step problem? Intervals too large? Try reduce maxtimestep
+
+Error in (function (expr, envir = parent.frame(), enclos = if (is.list(envir) ||  : 
+  Exception: quad_form_sym: A is not symmetric. A[1,2] = nan, but A[2,1] = nan  (in 'model_ctsm' at line 895)
+
+
+#### MAP
+
+```{r}
+# Model fitting
+fit_defus_map <- ctStanFit(datalong = dat_aggregated_c, ctstanmodel = model_defus, priors = TRUE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_map)
+
+plot(fit_defus_map, wait = FALSE)
+```
+
+Error in (function (expr, envir = parent.frame(), enclos = if (is.list(envir) ||  : 
+  Exception: mdivide_left_spd: Matrix A is not positive definite  (in 'model_ctsm' at line 924)s
+
+```{r}
+# Model fitting
+fit_defus_map_d <- ctStanFit(datalong = dat_aggregated_c, ctstanmodel = model_defus_d, priors = TRUE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_map_d)
+
+plot(fit_defus_map_d, wait = FALSE)
+```
+
+#### HMC
+
+```{r}
+#| cache: true
+# Model fitting
+fit_defus_hmc <- ctStanFit(datalong = dat_aggregated_c, ctstanmodel = model_defus, priors = TRUE, optimize = FALSE) 
+
+# Summary
+summary(fit_defus_hmc)
+
+plot(fit_defus_hmc, wait = FALSE)
+```
+
+```{r}
+# Diagnostics chains
+
+plot(fit_defus_hmc, types = "trace", wait = FALSE)
+
+rstan::stan_trace(fit_defus_hmc$stanfit$stanfit, pars = ctStanParnames(fit_defus_hmc, "pop_DRIFT"))
+
+max(rstan::summary(fit_defus_hmc$stanfit$stanfit)$summary[, "Rhat"], na.rm = TRUE)
+min(rstan::summary(fit_defus_hmc$stanfit$stanfit)$summary[, "n_eff"], na.rm = TRUE)
+rstan::check_hmc_diagnostics(fit_defus_hmc$stanfit$stanfit)
+```
+
+### Random intercept
+
+#### ML optimization
+
+```{r}
+# Model fitting
+fit_defus_ml_d_ri <- ctStanFit(datalong = dat_aggregated_c, 
+                               ctstanmodel = model_defus_d_ri, 
+                               priors = FALSE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_ml_d_ri)
+
+plot(fit_defus_ml_d_ri, wait = FALSE)
+```
+
+Error in delta[abs(delta) > maxparchange] <- maxparchange * sign(delta[abs(delta) >  : 
+  NAs are not allowed in subscripted assignments
+  
+Possible time step problem? Intervals too large? Try reduce maxtimestep
+
+Error in (function (expr, envir = parent.frame(), enclos = if (is.list(envir) ||  : 
+  Exception: quad_form_sym: A is not symmetric. A[1,2] = nan, but A[2,1] = nan  (in 'model_ctsm' at line 779)
+
+
+
+#### MAP
+
+```{r}
+#| cache: true
+# Model fitting
+fit_defus_map_ri <- ctStanFit(datalong = dat_aggregated_c, 
+                              ctstanmodel = model_defus_ri, 
+                              priors = TRUE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_map_ri)
+
+plot(fit_defus_map_ri, wait = FALSE)
+```
+
+#### HMC
+
+```{r}
+#| cache: true
+# Model fitting
+fit_defus_hmc_ri <- ctStanFit(datalong = dat_aggregated_c, 
+                              ctstanmodel = model_defus_ri, 
+                              priors = TRUE, optimize = FALSE) 
+
+# Summary
+summary(fit_defus_hmc_ri)
+
+plot(fit_defus_hmc_ri)
+```
+
+```{r}
+# Diagnostics chains
+
+plot(fit_defus_hmc_ri, types = "trace", wait = FALSE)
+
+rstan::stan_trace(fit_defus_hmc_ri$stanfit$stanfit, pars = ctStanParnames(fit_defus_hmc, "pop_DRIFT"))
+
+max(rstan::summary(fit_defus_hmc_ri$stanfit$stanfit)$summary[, "Rhat"], na.rm = TRUE)
+min(rstan::summary(fit_defus_hmc_ri$stanfit$stanfit)$summary[, "n_eff"], na.rm = TRUE)
+rstan::check_hmc_diagnostics(fit_defus_hmc_ri$stanfit$stanfit)
+```
+
+## Model comparison
+
+### ML
+
+```{r}
+# without ri, time scale = days
+model_defus_d_0 <- ctModel(type = "stanct", time = "time_days", id = "pseudonym",
+                           n.latent = 2, 
+                           latentNames = c("symptom_load", "defusion"),
+                           n.manifest = 2, 
+                           manifestNames = c("A1b", "A3"),
+                           LAMBDA = diag(2),
+                           DRIFT = matrix(0, nrow = 2, ncol = 2))
+head(model_defus_d_0)
+
+# Model fitting
+fit_defus_ml_ri_0 <- ctStanFit(datalong = dat_aggregated_c, 
+                              ctstanmodel = model_defus_d_0, 
+                              priors = FALSE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_ml_ri_0)
+
+# model comparison
+ctChisqTest(fit_defus_ml_d_ri, fit_defus_ml_ri_0)
+
+```
+
+### MAP
+
+```{r}
+# without ri, time scale = days
+model_defus_d_0 <- ctModel(type = "stanct", time = "time_days", id = "pseudonym",
+                           n.latent = 2, 
+                           latentNames = c("symptom_load", "defusion"),
+                           n.manifest = 2, 
+                           manifestNames = c("A1b", "A3"),
+                           LAMBDA = diag(2),
+                           DRIFT = matrix(0, nrow = 2, ncol = 2))
+head(model_defus_d_0)
+
+# Model fitting
+fit_defus_ml_ri_0 <- ctStanFit(datalong = dat_aggregated_c, 
+                              ctstanmodel = model_defus_d_0, 
+                              priors = FALSE, optimize = TRUE) 
+
+# Summary
+summary(fit_defus_ml_ri_0)
+
+# model comparison
+ctChisqTest(fit_defus_ml_d_ri, fit_defus_ml_ri_0)
+
+```
+
+## Brain dump
 
 ```{r, eval=FALSE}
 pred <- c("A1a", "A1b", "A3", "A9", "A4", "A8", "A6", "A2", "A5", "A7")
@@ -141,11 +406,22 @@ model_all <- ctModel(type = "stanct", time = "time_hours", id = "pseudonym",
 model_all$pars$indvarying <- FALSE
 
 # Model fitting
-fit_all <- ctStanFit(datalong = dat_aggregated, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
+fit_all <- ctStanFit(datalong = dat_aggregated_c, ctstanmodel = model_all, priors = TRUE, optimize = TRUE) 
 # priors: True -> HMC, false -> max likelihood
 
 # Summary
 summary(fit_all)
 
+```
+
+
+```{r}
+dat_aggregated_c %>%
+  group_by(pseudonym) %>%
+  arrange(time_hours) %>%
+  mutate(interval = time_hours - lag(time_hours)) %>%
+  summarise(max_interval = max(interval, na.rm = TRUE))
+
+# nlcontrol = list(maxtimestep = 15)
 ```
 

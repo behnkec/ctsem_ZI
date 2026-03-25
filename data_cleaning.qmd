@@ -1,15 +1,13 @@
 ---
-title: "ctSEM ema"
-format: html
-author: Clara Behnke
+title: "Data cleaning"
+author: "Clara Behnke"
+format: pdf
 ---
 
 ## Load packages
 
 ```{r, message=FALSE}
-library(readr)
 library(tidyverse)
-library(misty)
 ```
 
 ## Data preparation
@@ -25,11 +23,24 @@ dat <- bind_rows(
   dat_ema1 %>% filter(grepl("NBMT", pseudonym, fixed = TRUE))
 )
 
-#str(dat)
-#View(dat)
+```
+
+### Formating and aggregation
+
+- excludes self initiated interactions
+- adds columns for each item
+- reshapes data to have one row per questionnaire
+
+```{r, message=FALSE}
+# proportion of requested interaction
+xtabs(~ triggerName, data = dat)["RequestedInteraction"]/nrow(dat)
+
+# exclude self initiated interactions
+dat_systemTriggered <- dat %>%
+  filter(triggerName == "TriggerDailyAtRandomInTimeRangeVariableConfig")
 
 # add columns for every item
-dat <- dat %>%
+dat_systemTriggered <- dat_systemTriggered %>%
   mutate(
     A1a = as.numeric(ifelse(grepl("A1a", variableName), variableValue, NA)),
     A1b = as.numeric(ifelse(grepl("A1b", variableName), variableValue, NA)),
@@ -47,10 +58,6 @@ dat <- dat %>%
     A5 = as.numeric(ifelse(grepl("A5", variableName), variableValue, NA)),
     A7 = as.numeric(ifelse(grepl("A7", variableName), variableValue, NA))
   )
-
-# exclude self initiated interactions
-dat_systemTriggered <- dat %>%
-  filter(triggerName == "TriggerDailyAtRandomInTimeRangeVariableConfig")
 
 # aggregate to one time point per interaction
 items <- c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "K1", "K2", "A6", "A2", "A5", "A7")
@@ -94,6 +101,30 @@ dat_aggregated <- dat_systemTriggered %>%
     .groups = "drop"
   )
 
+```
+
+## Data cleaning
+
+- removes rows where inputs are 50 (the default) for all the items/act scores
+
+```{r}
+# Data cleaning: remove rows that only contain 50s
+n_all_50 <- dat_aggregated %>%
+  filter(if_all(all_of(act_scores), ~ .x == 50)) 
+
+dat_aggregated <- dat_aggregated %>%
+  filter(!if_all(all_of(act_scores), ~ .x == 50))
+```
+
+## New columns
+
+### Time
+
+- creates rows with the time difference from first observation in days and hours
+- initial time point: pre-determined
+- time scale: individual
+
+```{r}
 # individual time scale in days and hours
 dat_aggregated <- dat_aggregated %>%
   
@@ -107,40 +138,26 @@ dat_aggregated <- dat_aggregated %>%
   mutate(
     time_hours = as.numeric(difftime(variableCreatedDateTime, first(variableCreatedDateTime), units = "hours"))
   ) %>%
-  mutate(
-    K1 = as.factor(K1),
-    K2 = as.factor(K2)
-  ) %>%
   ungroup() %>%
   
   # sort by pseudonym and time
   arrange(pseudonym, time_days)
+```
 
+### Query number and study day
+
+```{r}
+dat_aggregated <- dat_aggregated %>%
+  group_by(pseudonym) %>%
+  arrange(time_hours) %>%
+  mutate(query_number = row_number()) %>% # add query number per participant
+  mutate(study_day = ceiling(time_days)) %>% # add study day per participant
+  ungroup()
+```
+
+## Export
+
+```{r}
 write.csv(dat_aggregated, file = "aggregated_data_triggered_ZI.csv", row.names = FALSE)
-
-# Scaling
-
-# dat_scaled <- dat_aggregated
-# dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")] <- scale(dat_scaled[, c("A1a", "A1b", "A3", "A9", "A4", "K3", "K4", "A8", "A6", "A2", "A5", "A7")])
 ```
 
-```{r}
-# Data cleaning: remove rows that only contain 50s
-n_all_50 <- dat_aggregated %>%
-  filter(if_all(all_of(act_scores), ~ .x == 50)) 
-
-#dat_aggregated <- dat_aggregated %>%
-#  filter(!if_all(all_of(act_scores), ~ .x == 50))
-```
-
-
-## Descriptives
-
-```{r}
-# proportion of completed questionnaires
-xtabs(~ interactionStatus, data = dat_aggregated)["Completed"]/nrow(dat_aggregated)
-
-# proportion of requested interaction
-xtabs(~ triggerName, data = dat)["RequestedInteraction"]/nrow(dat)
-
-```
